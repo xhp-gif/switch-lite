@@ -1,0 +1,164 @@
+import express from 'express';
+import fs from 'node:fs';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { VENDOR_PRESETS, getPreset } from './presets.js';
+import { discoverModels, authFor } from './registry.js';
+import * as storage from './storage.js';
+import { applyConfig, configStatus } from './configWriter.js';
+import { summarizeUsage, clearUsage } from './usage.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const distDir = path.resolve(__dirname, '..', 'dist');
+
+// 检测原版 CC Switch 是否在运行：它会持续回写 Codex 配置，
+// 与 SwitchLite 同时使用时会把刚写入的配置覆盖掉。
+function ccSwitchRunning() {
+  return new Promise((resolve) => {
+    if (process.platform !== 'win32') return resolve(false);
+    execFile('tasklist', ['/FI', 'IMAGENAME eq cc-switch.exe', '/NH'], { timeout: 3000 }, (err, stdout) => {
+      if (err) return resolve(false);
+      resolve(/cc-switch\.exe/i.test(stdout));
+    });
+  });
+}
+
+export function createApp() {
+  const app = express();
+  app.use(express.json({ limit: '1mb' }));
+  // 启动时先合并历史遗留的重复供应商，避免列表混乱
+  storage.mergeDuplicateProviders();
+
+  app.get('/api/health', async (req, res) => {
+    res.json({ ok: true, version: '0.1.0', ccSwitchRunning: await ccSwitchRunning() });
+  });
+
+  app.get('/api/presets', (req, res) => {
+    res.json(VENDOR_PRESETS);
+  });
+
+  app.get('/api/settings', (req, res) => {
+    res.json(storage.getSettings());
+  });
+
+  app.put('/api/settings/active', (req, res) => {
+    const { target, providerId } = req.body || {};
+    if (!['claude', 'codex', 'gemini', 'opencode', 'hermes'].includes(target)) {
+      return res.status(400).json({ error: '未知 Agent' });
+    }
+    if (providerId && !storage.getProvider(providerId)) {
+      return res.status(404).json({ error: '供应商不存在' });
+    }
+    res.json(storage.setActiveProvider(target, providerId || null));
+  });
+
+  app.get('/api/providers', (req, res) => {
+    res.json(storage.listProviders());
+  });
+
+  app.post('/api/providers', (req, res) => {
+    const provider = storage.createProvider(req.body || {});
+    res.status(201).json(provider);
+  });
+
+  app.put('/api/providers/:id', (req, res) => {
+    const provider = storage.updateProvider(req.params.id, req.body || {});
+    if (!provider) return res.status(404).json({ error: '供应商不存在' });
+    res.json(provider);
+  });
+
+  app.delete('/api/providers/:id', (req, res) => {
+    const ok = storage.removeProvider(req.params.id);
+    if (!ok) return res.status(404).json({ error: '供应商不存在' });
+    res.json({ ok: true });
+  });
+
+  // 直接按 URL 试抓模型（未保存的供应商也可用）
+  app.post('/api/fetch-models', async (req, res) => {
+    try {
+      const { baseUrl, apiKey = '', protocol = 'openai' } = req.body || {};
+      const result = await discoverModels({ baseUrl, apiKey, protocol });
+      res.json({ ...result, count: result.models.length });
+    } catch (err) {
+      res.status(400).json({ error: err.message, attempts: err.attempts || null });
+    }
+  });
+
+  app.post('/api/providers/:id/fetch-models', async (req, res) => {
+    const provider = storage.getProvider(req.params.id);
+    if (!provider) return res.status(404).json({ error: '供应商不存在' });
+    try {
+      const result = await discoverModels({
+        baseUrl: provider.baseUrl,
+        apiKey: provider.apiKey || '',
+        protocol: provider.protocol,
+      });
+      const updated = storage.updateProvider(provider.id, {
+        models: result.models,
+        fetchedAt: new Date().toISOString(),
+        lastFetchError: null,
+      });
+      res.json({ provider: updated, ...result, count: result.models.length });
+    } catch (err) {
+      const updated = storage.updateProvider(provider.id, { lastFetchError: err.message });
+      res.status(400).json({ error: err.message, attempts: err.attempts || null, provider: updated });
+    }
+  });
+
+  app.post('/api/config/apply', async (req, res) => {
+    try {
+      const { providerId, target, modelId } = req.body || {};
+      const provider = storage.getProvider(providerId);
+      if (!provider) return res.status(404).json({ error: '供应商不存在' });
+      const mid = modelId || provider.selectedModel;
+      const result = applyConfig({ target, provider, modelId: mid });
+      storage.updateProvider(providerId, {
+        selectedModel: mid,
+        lastApplied: { target, at: new Date().toISOString() },
+      });
+      storage.setActiveProvider(target, providerId);
+      const ccRunning = await ccSwitchRunning();
+      res.json({
+        ...result,
+        warning: ccRunning
+          ? '检测到原版 CC Switch 正在运行，它会把 Codex 配置改回去。请先完全退出 CC Switch（托盘图标 → 退出）再使用。'
+          : null,
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/config/status', (req, res) => {
+    res.json(configStatus());
+  });
+
+  // 用量看板：days=7/30/0(全部)
+  app.get('/api/usage/summary', (req, res) => {
+    const days = Number(req.query.days ?? 7);
+    res.json(summarizeUsage(Number.isFinite(days) && days >= 0 ? days : 7));
+  });
+
+  app.delete('/api/usage', (req, res) => {
+    clearUsage();
+    res.json({ ok: true });
+  });
+
+  if (fs.existsSync(distDir)) {
+    app.use(express.static(distDir));
+    app.get(/^(?!\/api).*/, (req, res) => {
+      res.sendFile(path.join(distDir, 'index.html'));
+    });
+  }
+
+  app.use((err, req, res, next) => {
+    if (err) {
+      res.status(400).json({ error: err.message || '请求错误' });
+      return;
+    }
+    next();
+  });
+
+  return app;
+}
