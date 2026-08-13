@@ -81,6 +81,8 @@ export interface UsageEvent {
   input: number;
   output: number;
   total: number;
+  cached?: number;
+  durationMs?: number;
   status?: number;
   ok?: boolean;
 }
@@ -93,6 +95,7 @@ export interface UsageProviderStat {
   input: number;
   output: number;
   total: number;
+  cached: number;
   errors: number;
 }
 
@@ -103,6 +106,8 @@ export interface UsageModelStat {
   input: number;
   output: number;
   total: number;
+  cached: number;
+  errors: number;
 }
 
 export interface UsageDayStat {
@@ -115,7 +120,15 @@ export interface UsageDayStat {
 
 export interface UsageSummary {
   days: number;
-  totals: { requests: number; input: number; output: number; total: number; errors: number };
+  totals: {
+    requests: number;
+    input: number;
+    output: number;
+    total: number;
+    cached: number;
+    errors: number;
+    avgDurationMs: number;
+  };
   byProvider: UsageProviderStat[];
   byModel: UsageModelStat[];
   daily: UsageDayStat[];

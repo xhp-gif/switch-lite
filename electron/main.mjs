@@ -7,18 +7,26 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApp } from '../server/app.js';
 import { startRelay } from '../server/relay.js';
+import { ensureRelay } from '../server/relayLauncher.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_PORT = Number(process.env.PORT || 4174);
 const isSmokeTest = process.argv.includes('--smoke-test');
+// 开机自启模式：只跑中继，不开窗口（由「设置 → 开机自动启动中继」注册）
+const isRelayOnly = process.argv.includes('--relay-only');
 
-const gotLock = app.requestSingleInstanceLock();
-if (!gotLock) {
-  app.quit();
+if (isRelayOnly) {
+  app.whenReady().then(() => startRelay());
+  // 无窗口也要保持进程存活
+  app.on('window-all-closed', () => {});
+} else {
+  const gotLock = app.requestSingleInstanceLock();
+  if (!gotLock) {
+    app.quit();
+  }
 }
 
 let server;
-let relay;
 let win;
 
 async function startServer() {
@@ -48,7 +56,8 @@ async function main() {
   }
 
   try {
-    relay = startRelay();
+    // 中继以独立进程常驻：退出 SwitchLite 后 Agent 仍可使用、用量持续记录
+    ensureRelay().then((r) => console.log(`[relay] ${r.status}${r.pid ? ` (pid ${r.pid})` : ''}`));
   } catch (err) {
     console.error('[relay] 启动失败:', err.message);
   }
@@ -85,10 +94,11 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   if (server) server.close();
-  if (relay) relay.close();
 });
 
-app.whenReady().then(main).catch((err) => {
-  dialog.showErrorBox('SwitchLite 启动失败', String(err && err.message ? err.message : err));
-  app.exit(1);
-});
+if (!isRelayOnly) {
+  app.whenReady().then(main).catch((err) => {
+    dialog.showErrorBox('SwitchLite 启动失败', String(err && err.message ? err.message : err));
+    app.exit(1);
+  });
+}

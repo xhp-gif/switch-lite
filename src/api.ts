@@ -41,6 +41,12 @@ export const api = {
   configStatus: () => req<Record<string, ConfigStatusEntry>>('/api/config/status'),
   usageSummary: (days: number) => req<UsageSummary>(`/api/usage/summary?days=${days}`),
   clearUsage: () => req<{ ok: boolean }>('/api/usage', { method: 'DELETE' }),
+  getRelayAutostart: () => req<{ supported: boolean; enabled: boolean }>('/api/relay/autostart'),
+  setRelayAutostart: (enabled: boolean) =>
+    req<{ supported: boolean; enabled: boolean }>('/api/relay/autostart', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    }),
   getSettings: () => req<Settings>('/api/settings'),
   setActive: (target: Target, providerId: string | null) =>
     req<Settings>('/api/settings/active', {

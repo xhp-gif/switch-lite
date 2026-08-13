@@ -79,6 +79,12 @@ test('中继全链路：/p/<id> 转发 -> 鉴权注入 -> SSE 计量落盘', asy
   assert.equal(e.status, 200);
   assert.equal(e.ok, true);
 
+  // 健康检查：启动器据此判断中继存活与代码新旧
+  const health = await fetch(`http://127.0.0.1:${relayPort}/__health`).then((r) => r.json());
+  assert.equal(health.ok, true);
+  assert.equal(typeof health.pid, 'number');
+  assert.equal(typeof health.startedAt, 'number');
+
   // 未知供应商：502，不产生计量
   const res2 = await fetch(`http://127.0.0.1:${relayPort}/p/no-such-id/responses`, { method: 'POST', body: '{}' });
   assert.equal(res2.status, 502);

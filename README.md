@@ -8,7 +8,7 @@
 - 阿里云百炼这类模型特别多的厂商，默认展示「推荐」视图（DeepSeek / GLM / Kimi / 通义千问等常用系列），而不是把几百个模型一次性砸给你；需要时切到「全部」。
 - 供应商按 Agent 隔离管理，接入即写入对应配置并设为当前，写入前自动备份原文件。
 - 侧栏「设置」里可切换 浅色 / 深色 / 跟随系统 三种界面主题。
-- 所有 Agent 的请求经本地中继（`127.0.0.1:4180`）转发到真实供应商：中继按供应商注入鉴权、为严格网关剥离不兼容工具，并顺带计量每次调用的 token 用量——「设置 → 用量看板」里按厂商 / 模型查看请求数、输入输出 tokens、失败数与最近调用。**注意：接入后请保持 SwitchLite 运行，关闭后各 Agent 将无法连接供应商。**
+- 所有 Agent 的请求经本地中继（`127.0.0.1:4180`）转发到真实供应商：中继按供应商注入鉴权、为严格网关剥离不兼容工具，并顺带计量每次调用的 token 用量——「设置 → 用量看板」里按厂商 / 模型查看请求数、输入输出 tokens、失败数与最近调用。**中继是独立常驻进程**：SwitchLite 启动时拉起后，即使关闭窗口 Agent 也照常可用、用量持续记录；「设置」里还可开启「开机自动启动中继」（Windows 登录后自动拉起，无需先开 SwitchLite）。
 
 ## 快速开始
 
@@ -51,6 +51,9 @@ server/
   configWriter.js   # 写 Claude Code / Codex CLI 等配置，带自动备份；地址指向本地中继
   hermesConfig.js   # 读写 Hermes Agent 的 config.yaml（YAML，保留注释与其它段）
   relay.js          # 本地中继：/p/<供应商id> 按供应商转发 + 鉴权注入 + 工具剥离 + token 计量
+  relayLauncher.js  # 中继拉起器：健康检查 + detached 独立进程（主程序退出后仍存活）
+  relay-standalone.js # 中继独立进程入口
+  autostart.js      # 开机自动启动中继（Windows Run 键）
   app.js            # Express API
 src/                # React + Vite 前端（设置弹窗：主题切换 + 用量看板）
 test/               # node:test 单元 + 全链路测试

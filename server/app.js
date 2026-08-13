@@ -8,6 +8,7 @@ import { discoverModels, authFor } from './registry.js';
 import * as storage from './storage.js';
 import { applyConfig, configStatus } from './configWriter.js';
 import { summarizeUsage, clearUsage } from './usage.js';
+import { getRelayAutostart, setRelayAutostart } from './autostart.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(__dirname, '..', 'dist');
@@ -143,6 +144,19 @@ export function createApp() {
   app.delete('/api/usage', (req, res) => {
     clearUsage();
     res.json({ ok: true });
+  });
+
+  // 开机自动启动中继（Windows Run 键）
+  app.get('/api/relay/autostart', async (req, res) => {
+    res.json(await getRelayAutostart());
+  });
+
+  app.put('/api/relay/autostart', async (req, res) => {
+    try {
+      res.json(await setRelayAutostart(!!req.body?.enabled));
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
   });
 
   if (fs.existsSync(distDir)) {

@@ -1332,17 +1332,55 @@ select:focus-visible {
 }
 
 .settings-modal {
-  width: 720px;
+  width: 960px;
+  height: 86vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.settings-tabs {
+.settings-layout {
+  display: grid;
+  grid-template-columns: 148px 1fr;
+  gap: 18px;
+  flex: 1;
+  min-height: 0;
+}
+
+.settings-nav {
   display: flex;
+  flex-direction: column;
   gap: 4px;
-  background: var(--tabs-bg);
+  border-right: 1px solid var(--line);
+  padding-right: 14px;
+}
+
+.settings-nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
   border-radius: 10px;
-  padding: 3px;
-  margin-bottom: 18px;
-  width: fit-content;
+  padding: 8px 11px;
+  cursor: pointer;
+  text-align: left;
+  transition: all 0.16s ease;
+}
+
+.settings-nav-item:hover {
+  color: var(--text);
+  background: var(--hover-bg);
+}
+
+.settings-nav-item.active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
 .settings-tab {
@@ -1371,7 +1409,10 @@ select:focus-visible {
 .settings-body {
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 22px;
+  overflow-y: auto;
+  padding-right: 4px;
+  padding-bottom: 4px;
 }
 
 .settings-section h4 {
@@ -1452,6 +1493,37 @@ select:focus-visible {
   color: var(--code-text);
 }
 
+.autostart-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--card-bg);
+  cursor: pointer;
+  margin-bottom: 10px;
+}
+
+.autostart-row input[type='checkbox'] {
+  width: auto;
+  margin-top: 2px;
+  accent-color: var(--accent);
+}
+
+.autostart-row b {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.autostart-desc {
+  display: block;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
 /* ---------- 用量看板 ---------- */
 
 .usage-toolbar {
@@ -1488,7 +1560,7 @@ select:focus-visible {
   background: var(--card-bg);
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 
 .usage-card-num {
@@ -1507,44 +1579,195 @@ select:focus-visible {
   color: var(--muted);
 }
 
+.usage-card-sub {
+  font-size: 10.5px;
+  color: var(--muted);
+  opacity: 0.85;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
 .usage-table {
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 
-.usage-row {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 11px 13px;
-  background: var(--card-bg);
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
+.donut-wrap {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  gap: 22px;
+  align-items: center;
 }
 
-.usage-row-head {
+.donut {
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  box-shadow: var(--shadow-sm);
+}
+
+.donut-hole {
+  width: 106px;
+  height: 106px;
+  border-radius: 50%;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+}
+
+.donut-hole b {
+  font-size: 15px;
+  font-weight: 750;
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
+.donut-hole span {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+.donut-table {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.donut-row {
+  display: grid;
+  grid-template-columns: 1fr 52px 72px 72px 84px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 13px;
+  font-size: 12px;
+  background: var(--card-bg);
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
+.donut-row + .donut-row {
+  border-top: 1px solid var(--line);
+}
+
+.donut-row.head {
+  background: var(--panel-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-family: inherit;
+}
+
+.donut-row b {
+  font-weight: 650;
+}
+
+.donut-model {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font-family: inherit;
+}
+
+.donut-model code {
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.donut-provider {
+  color: var(--muted);
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+.donut-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.trend-legend {
+  display: flex;
+  gap: 16px;
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.trend-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.trend-key {
+  width: 14px;
+  height: 3px;
+  border-radius: 2px;
+}
+
+.trend-key.input {
+  background: var(--accent);
+}
+
+.trend-key.output {
+  background: #2fbf9b;
+}
+
+.trend-chart {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card-bg);
+  display: block;
+}
+
+.trend-grid {
+  stroke: var(--line);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+}
+
+.trend-grid.strong {
+  stroke-dasharray: none;
+}
+
+.trend-ylabel,
+.trend-xlabel {
+  font-size: 10px;
+  fill: var(--muted);
+  font-family: 'SF Mono', Consolas, monospace;
+}
+
+.trend-line.input {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+.trend-line.output {
+  stroke: #2fbf9b;
+  stroke-width: 2;
+}
+
+.trend-dot.input {
+  fill: var(--accent);
+}
+
+.trend-dot.output {
+  fill: #2fbf9b;
 }
 
 .usage-name {
   font-weight: 650;
   font-size: 13px;
-}
-
-.usage-bar-track {
-  height: 6px;
-  border-radius: 99px;
-  background: var(--tabs-bg);
-  overflow: hidden;
-}
-
-.usage-bar {
-  height: 100%;
-  border-radius: 99px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
 }
 
 .usage-row-nums {
@@ -1560,30 +1783,6 @@ select:focus-visible {
 .usage-row-nums b {
   color: var(--text);
   font-weight: 650;
-}
-
-.usage-model-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  padding: 8px 12px;
-  background: var(--card-bg);
-  font-size: 12px;
-}
-
-.usage-model-row code {
-  flex: 1;
-  font-family: 'SF Mono', Consolas, monospace;
-  font-size: 12px;
-  word-break: break-all;
-}
-
-.usage-provider-name {
-  color: var(--muted);
-  font-size: 11.5px;
-  flex-shrink: 0;
 }
 
 .usage-event-row {

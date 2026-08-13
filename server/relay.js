@@ -49,7 +49,12 @@ export function isStrictHost(upstream) {
   return STRICT_HOSTS.some((h) => String(upstream || '').includes(h));
 }
 
-function stripUnsupportedTools(body) {
+// 严格网关 + Responses API 才需要剥离工具；新路由的 pathOnly 不带前导斜杠（"responses"），旧路由带（"/v2/responses"）
+export function needsToolStrip(upstream, method, pathOnly) {
+  return isStrictHost(upstream) && method === 'POST' && /(^|\/)responses$/.test(String(pathOnly || ''));
+}
+
+export function stripUnsupportedTools(body) {
   try {
     const obj = JSON.parse(body);
     if (!obj || !Array.isArray(obj.tools)) return body;
@@ -115,6 +120,7 @@ export function extractUsage(protocol, reqPath, reqBody, respText) {
     const model = modelFromRequest(protocol, reqPath, reqBody);
     let input = 0;
     let output = 0;
+    let cached = 0;
     let found = false;
 
     for (const ev of events) {
@@ -123,6 +129,7 @@ export function extractUsage(protocol, reqPath, reqBody, respText) {
       if (ru && (ru.input_tokens != null || ru.output_tokens != null)) {
         input = Number(ru.input_tokens) || 0;
         output = Number(ru.output_tokens) || 0;
+        cached = Number(ru.input_tokens_details?.cached_tokens) || 0;
         found = true;
         continue;
       }
@@ -130,6 +137,7 @@ export function extractUsage(protocol, reqPath, reqBody, respText) {
       if (ev?.type === 'message_start' && ev?.message?.usage) {
         input = Number(ev.message.usage.input_tokens) || 0;
         output = Number(ev.message.usage.output_tokens) || 0;
+        cached = Number(ev.message.usage.cache_read_input_tokens) || 0;
         found = true;
         continue;
       }
@@ -143,6 +151,7 @@ export function extractUsage(protocol, reqPath, reqBody, respText) {
       if (gm && (gm.promptTokenCount != null || gm.candidatesTokenCount != null)) {
         input = Number(gm.promptTokenCount) || 0;
         output = Number(gm.candidatesTokenCount) || 0;
+        cached = Number(gm.cachedContentTokenCount) || 0;
         found = true;
         continue;
       }
@@ -154,12 +163,13 @@ export function extractUsage(protocol, reqPath, reqBody, respText) {
         if (i != null || o != null) {
           input = Number(i) || 0;
           output = Number(o) || 0;
+          cached = Number(u.prompt_tokens_details?.cached_tokens ?? u.cache_read_input_tokens) || 0;
           found = true;
         }
       }
     }
     if (!found) return null;
-    return { model, input, output, total: input + output };
+    return { model, input, output, total: input + output, cached };
   } catch {
     return null;
   }
@@ -231,7 +241,7 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
   readBody(req, (body) => {
     let outBody = body;
     const pathOnly = restWithQuery.split('?')[0];
-    if (isStrictHost(upstream) && req.method === 'POST' && /\/responses$/.test(pathOnly)) {
+    if (needsToolStrip(upstream, req.method, pathOnly)) {
       outBody = stripUnsupportedTools(body);
     }
     const headers = { ...req.headers };
@@ -246,6 +256,7 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
     const target = `${upstream}/${restWithQuery}`;
     headers.host = new URL(target).host;
     headers['content-length'] = Buffer.byteLength(outBody);
+    const startedAt = Date.now();
     forward(req, res, {
       upstream: target,
       headers,
@@ -260,6 +271,8 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
           input: usage?.input || 0,
           output: usage?.output || 0,
           total: usage?.total || 0,
+          cached: usage?.cached || 0,
+          durationMs: Date.now() - startedAt,
           status,
           ok: status < 400,
         });
@@ -276,10 +289,9 @@ function handleLegacyRoute(req, res) {
     res.end(JSON.stringify({ error: 'relay 未配置：请先在 SwitchLite 中接入 Codex 供应商' }));
     return;
   }
-  const strict = isStrictHost(conf.upstream);
   readBody(req, (body) => {
     let outBody = body;
-    if (strict && req.method === 'POST' && /\/responses$/.test(req.url || '')) {
+    if (needsToolStrip(conf.upstream, req.method, req.url)) {
       outBody = stripUnsupportedTools(body);
     }
     const u = new URL(String(conf.upstream).replace(/\/+$/, '') + (req.url || '/'));
@@ -290,7 +302,14 @@ function handleLegacyRoute(req, res) {
 }
 
 export function startRelay() {
+  const startedAt = Date.now();
   const server = http.createServer((req, res) => {
+    // 健康检查：供启动器判断中继是否存活、是否需要按代码新旧替换
+    if (req.method === 'GET' && (req.url === '/__health' || req.url === '/__health/')) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, pid: process.pid, startedAt }));
+      return;
+    }
     const m = String(req.url || '').match(/^\/p\/([A-Za-z0-9-]+)\/?(.*)$/);
     if (m) return handleProviderRoute(req, res, m[1], m[2]);
     return handleLegacyRoute(req, res);

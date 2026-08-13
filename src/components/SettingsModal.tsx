@@ -1,18 +1,20 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { APP_VERSION, agentName } from '../agents';
 import { getTheme, setTheme, type ThemeMode } from '../theme';
-import type { Target, UsageSummary } from '../types';
+import type { Target, UsageDayStat, UsageSummary } from '../types';
 
 interface Props {
   onClose: () => void;
   onError: (text: string) => void;
 }
 
+type Section = 'appearance' | 'usage';
+
 const THEME_OPTIONS: { id: ThemeMode; name: string; desc: string }[] = [
   { id: 'light', name: '浅色', desc: '明亮界面' },
   { id: 'dark', name: '深色', desc: '暗色界面' },
-  { id: 'system', name: '跟随系统', desc: '随系统深浅色自动切换' },
+  { id: 'system', name: '跟随系统', desc: '随系统自动切换' },
 ];
 
 const RANGE_OPTIONS = [
@@ -21,6 +23,8 @@ const RANGE_OPTIONS = [
   { days: 0, name: '全部' },
 ];
 
+const DONUT_PALETTE = ['#5b5bd6', '#8b7ff0', '#38bdf8', '#34d399', '#f5a623', '#f472b6', '#98a2b8'];
+
 function fmtNum(n: number) {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(2) + 'M';
   if (n >= 10_000) return (n / 1_000).toFixed(1) + 'k';
@@ -28,42 +32,134 @@ function fmtNum(n: number) {
   return String(n);
 }
 
+function fmtDur(ms: number) {
+  if (!ms) return '—';
+  return ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms) + 'ms';
+}
+
 function fmtTime(ts: string) {
   const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return ts;
   const pad = (v: number) => String(v).padStart(2, '0');
-  return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function shortDate(date: string) {
+  return date.slice(5); // MM-DD
 }
 
 function agentLabel(target: Target | '') {
   return target ? agentName(target as Target) : '—';
 }
 
+/** 按模型聚合的环图数据：前 6 名 + 其他合并 */
+function useDonut(summary: UsageSummary | null) {
+  return useMemo(() => {
+    if (!summary || !summary.byModel.length) return { segments: [], gradient: 'var(--tabs-bg)' };
+    const top = summary.byModel.slice(0, 6);
+    const rest = summary.byModel.slice(6);
+    const restTotal = rest.reduce((s, m) => s + m.total, 0);
+    const items = restTotal > 0 ? [...top, { model: '其他', provider: '', requests: rest.reduce((s, m) => s + m.requests, 0), input: 0, output: 0, total: restTotal, cached: 0, errors: 0 }] : top;
+    const totalAll = items.reduce((s, m) => s + m.total, 0) || 1;
+    let acc = 0;
+    const segments = items.map((m, i) => {
+      const pct = (m.total / totalAll) * 100;
+      const seg = { ...m, color: DONUT_PALETTE[i % DONUT_PALETTE.length], from: acc, to: acc + pct };
+      acc += pct;
+      return seg;
+    });
+    const gradient = `conic-gradient(${segments.map((s) => `${s.color} ${s.from.toFixed(2)}% ${s.to.toFixed(2)}%`).join(', ')})`;
+    return { segments, gradient };
+  }, [summary]);
+}
+
+/** Token 使用趋势（输入 / 输出两条线的简易 SVG 图） */
+function TrendChart({ daily }: { daily: UsageDayStat[] }) {
+  const W = 660;
+  const H = 190;
+  const padL = 46;
+  const padR = 12;
+  const padT = 14;
+  const padB = 26;
+  const iw = W - padL - padR;
+  const ih = H - padT - padB;
+  const max = Math.max(1, ...daily.map((d) => Math.max(d.input, d.output)));
+  const x = (i: number) => padL + (daily.length === 1 ? iw / 2 : (i / (daily.length - 1)) * iw);
+  const y = (v: number) => padT + ih - (v / max) * ih;
+  const line = (key: 'input' | 'output') => daily.map((d, i) => `${x(i).toFixed(1)},${y(d[key]).toFixed(1)}`).join(' ');
+  const ticks = [0.33, 0.66, 1];
+  const labelIdx = [...new Set([0, Math.floor((daily.length - 1) / 2), daily.length - 1])];
+
+  return (
+    <svg className="trend-chart" viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Token 使用趋势">
+      {ticks.map((t) => (
+        <g key={t}>
+          <line x1={padL} y1={y(max * t)} x2={W - padR} y2={y(max * t)} className="trend-grid" />
+          <text x={padL - 6} y={y(max * t) + 3.5} className="trend-ylabel" textAnchor="end">
+            {fmtNum(Math.round(max * t))}
+          </text>
+        </g>
+      ))}
+      <line x1={padL} y1={y(0)} x2={W - padR} y2={y(0)} className="trend-grid strong" />
+      <polyline points={line('input')} fill="none" className="trend-line input" />
+      <polyline points={line('output')} fill="none" className="trend-line output" />
+      {daily.map((d, i) => (
+        <g key={d.date}>
+          <circle cx={x(i)} cy={y(d.input)} r="2.6" className="trend-dot input" />
+          <circle cx={x(i)} cy={y(d.output)} r="2.6" className="trend-dot output" />
+        </g>
+      ))}
+      {labelIdx.map((i) => (
+        <text key={i} x={x(i)} y={H - 8} className="trend-xlabel" textAnchor="middle">
+          {shortDate(daily[i].date)}
+        </text>
+      ))}
+    </svg>
+  );
+}
+
 export function SettingsModal({ onClose, onError }: Props) {
-  const [tab, setTab] = useState<'general' | 'usage'>('general');
+  const [section, setSection] = useState<Section>('appearance');
   const [theme, setThemeState] = useState<ThemeMode>(getTheme());
   const [days, setDays] = useState(7);
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const loadUsage = useCallback(async (d: number) => {
-    setLoading(true);
-    try {
-      setSummary(await api.usageSummary(d));
-    } catch (e: unknown) {
-      onError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [onError]);
+  const [autostart, setAutostart] = useState<{ supported: boolean; enabled: boolean } | null>(null);
 
   useEffect(() => {
-    if (tab === 'usage') loadUsage(days);
-  }, [tab, days, loadUsage]);
+    api.getRelayAutostart().then(setAutostart).catch(() => setAutostart(null));
+  }, []);
+
+  const loadUsage = useCallback(
+    async (d: number) => {
+      setLoading(true);
+      try {
+        setSummary(await api.usageSummary(d));
+      } catch (e: unknown) {
+        onError((e as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [onError],
+  );
+
+  useEffect(() => {
+    if (section === 'usage') loadUsage(days);
+  }, [section, days, loadUsage]);
 
   const pickTheme = (mode: ThemeMode) => {
     setThemeState(mode);
     setTheme(mode);
+  };
+
+  const toggleAutostart = async () => {
+    if (!autostart) return;
+    try {
+      setAutostart(await api.setRelayAutostart(!autostart.enabled));
+    } catch (e: unknown) {
+      onError((e as Error).message);
+    }
   };
 
   const handleClear = async () => {
@@ -76,7 +172,8 @@ export function SettingsModal({ onClose, onError }: Props) {
     }
   };
 
-  const maxProviderTotal = summary?.byProvider.reduce((m, p) => Math.max(m, p.total), 0) || 0;
+  const donut = useDonut(summary);
+  const hasData = !!summary && summary.totals.requests > 0;
 
   return (
     <div className="modal-mask">
@@ -88,175 +185,248 @@ export function SettingsModal({ onClose, onError }: Props) {
           </button>
         </div>
 
-        <div className="settings-tabs">
-          <button className={`settings-tab ${tab === 'general' ? 'active' : ''}`} onClick={() => setTab('general')}>
-            通用
-          </button>
-          <button className={`settings-tab ${tab === 'usage' ? 'active' : ''}`} onClick={() => setTab('usage')}>
-            用量看板
-          </button>
-        </div>
+        <div className="settings-layout">
+          <nav className="settings-nav">
+            <button
+              className={`settings-nav-item ${section === 'appearance' ? 'active' : ''}`}
+              onClick={() => setSection('appearance')}
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                <path fill="currentColor" d="M12 3a9 9 0 000 18c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16a5 5 0 005-5c0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z" />
+              </svg>
+              <span>界面风格</span>
+            </button>
+            <button
+              className={`settings-nav-item ${section === 'usage' ? 'active' : ''}`}
+              onClick={() => setSection('usage')}
+            >
+              <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+                <path fill="currentColor" d="M4 20V10h3v10H4zm6.5 0V4h3v16h-3zM17 20v-7h3v7h-3z" />
+              </svg>
+              <span>用量看板</span>
+            </button>
+          </nav>
 
-        {tab === 'general' && (
           <div className="settings-body">
-            <div className="settings-section">
-              <h4>界面主题</h4>
-              <div className="theme-options">
-                {THEME_OPTIONS.map((o) => (
-                  <button
-                    key={o.id}
-                    className={`theme-option ${theme === o.id ? 'active' : ''}`}
-                    onClick={() => pickTheme(o.id)}
-                  >
-                    <span className="theme-option-name">{o.name}</span>
-                    <span className="theme-option-desc">{o.desc}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="settings-section">
-              <h4>关于</h4>
-              <div className="settings-info">
-                <div className="info-row">
-                  <span className="info-label">版本</span>
-                  <span>v{APP_VERSION}</span>
-                </div>
-                <div className="info-row">
-                  <span className="info-label">数据目录</span>
-                  <code>~/.cc-switch-lite</code>
-                </div>
-                <div className="info-row">
-                  <span className="info-label">本地中继</span>
-                  <code>127.0.0.1:4180</code>
-                </div>
-              </div>
-              <div className="alert info">
-                各 Agent 的请求经本地中继转发以统计 token 用量。请保持 SwitchLite 运行，关闭后已接入的 Agent 将无法连接供应商。
-              </div>
-            </div>
-          </div>
-        )}
-
-        {tab === 'usage' && (
-          <div className="settings-body">
-            <div className="usage-toolbar">
-              <div className="usage-range">
-                {RANGE_OPTIONS.map((r) => (
-                  <button
-                    key={r.days}
-                    className={`settings-tab ${days === r.days ? 'active' : ''}`}
-                    onClick={() => setDays(r.days)}
-                  >
-                    {r.name}
-                  </button>
-                ))}
-              </div>
-              <div className="usage-actions">
-                <button className="btn ghost" disabled={loading} onClick={() => loadUsage(days)}>
-                  刷新
-                </button>
-                <button className="btn ghost danger" onClick={handleClear}>
-                  清空统计
-                </button>
-              </div>
-            </div>
-
-            {!summary || summary.totals.requests === 0 ? (
-              <div className="empty usage-empty">
-                <span>
-                  {loading ? '加载中…' : '暂无用量数据。统计在 Agent 发起请求、且 SwitchLite 正在运行时产生（请求经本地中继转发）。'}
-                </span>
-              </div>
-            ) : (
+            {section === 'appearance' && (
               <>
-                <div className="usage-cards">
-                  <div className="usage-card">
-                    <span className="usage-card-num">{fmtNum(summary.totals.requests)}</span>
-                    <span className="usage-card-label">总请求数</span>
-                  </div>
-                  <div className="usage-card">
-                    <span className="usage-card-num">{fmtNum(summary.totals.input)}</span>
-                    <span className="usage-card-label">输入 tokens</span>
-                  </div>
-                  <div className="usage-card">
-                    <span className="usage-card-num">{fmtNum(summary.totals.output)}</span>
-                    <span className="usage-card-label">输出 tokens</span>
-                  </div>
-                  <div className="usage-card">
-                    <span className={`usage-card-num ${summary.totals.errors ? 'bad' : ''}`}>
-                      {fmtNum(summary.totals.errors)}
-                    </span>
-                    <span className="usage-card-label">失败请求</span>
-                  </div>
-                </div>
-
                 <div className="settings-section">
-                  <h4>按厂商</h4>
-                  <div className="usage-table">
-                    {summary.byProvider.map((p) => (
-                      <div className="usage-row" key={p.providerId || p.name}>
-                        <div className="usage-row-head">
-                          <span className="usage-name">{p.name}</span>
-                          <span className="tag">{agentLabel(p.target)}</span>
-                          {p.errors > 0 && <span className="tag danger">{p.errors} 失败</span>}
-                        </div>
-                        <div className="usage-bar-track">
-                          <div
-                            className="usage-bar"
-                            style={{ width: `${maxProviderTotal ? Math.max(2, (p.total / maxProviderTotal) * 100) : 0}%` }}
-                          />
-                        </div>
-                        <div className="usage-row-nums">
-                          <span>{p.requests} 次请求</span>
-                          <span>输入 {fmtNum(p.input)}</span>
-                          <span>输出 {fmtNum(p.output)}</span>
-                          <b>合计 {fmtNum(p.total)}</b>
-                        </div>
-                      </div>
+                  <h4>界面主题</h4>
+                  <div className="theme-options">
+                    {THEME_OPTIONS.map((o) => (
+                      <button
+                        key={o.id}
+                        className={`theme-option ${theme === o.id ? 'active' : ''}`}
+                        onClick={() => pickTheme(o.id)}
+                      >
+                        <span className="theme-option-name">{o.name}</span>
+                        <span className="theme-option-desc">{o.desc}</span>
+                      </button>
                     ))}
                   </div>
                 </div>
 
-                {summary.byModel.length > 0 && (
-                  <div className="settings-section">
-                    <h4>按模型</h4>
-                    <div className="usage-table">
-                      {summary.byModel.map((m) => (
-                        <div className="usage-model-row" key={`${m.provider}/${m.model}`}>
-                          <code>{m.model}</code>
-                          <span className="usage-provider-name">{m.provider}</span>
-                          <span className="usage-row-nums">
-                            <span>{m.requests} 次</span>
-                            <b>{fmtNum(m.total)} tokens</b>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                <div className="settings-section">
+                  <h4>本地中继</h4>
+                  {autostart?.supported && (
+                    <label className="autostart-row">
+                      <input type="checkbox" checked={autostart.enabled} onChange={toggleAutostart} />
+                      <span>
+                        <b>开机自动启动中继</b>
+                        <span className="autostart-desc">登录 Windows 后自动拉起中继，无需先打开 SwitchLite</span>
+                      </span>
+                    </label>
+                  )}
+                  <div className="alert info">
+                    中继是独立常驻进程：关闭 SwitchLite 窗口后 Agent 照常可用，用量也会持续记录（统计为旁路采集，不影响调用速度），下次打开看板即可查看。
                   </div>
-                )}
+                </div>
 
-                {summary.recent.length > 0 && (
-                  <div className="settings-section">
-                    <h4>最近调用</h4>
-                    <div className="usage-table">
-                      {summary.recent.map((e, i) => (
-                        <div className={`usage-event-row ${e.ok === false ? 'failed' : ''}`} key={`${e.ts}-${i}`}>
-                          <span className="usage-event-time">{fmtTime(e.ts)}</span>
-                          <span className="usage-name">{e.providerName}</span>
-                          <code>{e.model || '—'}</code>
-                          <span className="usage-row-nums">
-                            {e.ok === false ? <span className="tag danger">{e.status || '失败'}</span> : <b>{fmtNum(e.total)} tokens</b>}
-                          </span>
-                        </div>
-                      ))}
+                <div className="settings-section">
+                  <h4>关于</h4>
+                  <div className="settings-info">
+                    <div className="info-row">
+                      <span className="info-label">版本</span>
+                      <span>v{APP_VERSION}</span>
+                    </div>
+                    <div className="info-row">
+                      <span className="info-label">数据目录</span>
+                      <code>~/.cc-switch-lite</code>
+                    </div>
+                    <div className="info-row">
+                      <span className="info-label">本地中继</span>
+                      <code>127.0.0.1:4180</code>
                     </div>
                   </div>
+                </div>
+              </>
+            )}
+
+            {section === 'usage' && (
+              <>
+                <div className="usage-toolbar">
+                  <div className="usage-range">
+                    {RANGE_OPTIONS.map((r) => (
+                      <button
+                        key={r.days}
+                        className={`settings-tab ${days === r.days ? 'active' : ''}`}
+                        onClick={() => setDays(r.days)}
+                      >
+                        {r.name}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="usage-actions">
+                    <button className="btn ghost" disabled={loading} onClick={() => loadUsage(days)}>
+                      刷新
+                    </button>
+                    <button className="btn ghost danger" onClick={handleClear}>
+                      清空统计
+                    </button>
+                  </div>
+                </div>
+
+                {!hasData ? (
+                  <div className="empty usage-empty">
+                    <span>
+                      {loading
+                        ? '加载中…'
+                        : '暂无用量数据。Agent 发起请求时由本地中继旁路采集（不影响正常调用），有数据后会显示在这里。'}
+                    </span>
+                  </div>
+                ) : (
+                  <>
+                    <div className="usage-cards">
+                      <div className="usage-card">
+                        <span className="usage-card-label">总请求数</span>
+                        <span className="usage-card-num">{fmtNum(summary.totals.requests)}</span>
+                        <span className="usage-card-sub">所选范围内</span>
+                      </div>
+                      <div className="usage-card">
+                        <span className="usage-card-label">总 Token</span>
+                        <span className="usage-card-num">{fmtNum(summary.totals.total)}</span>
+                        <span className="usage-card-sub">
+                          输入 {fmtNum(summary.totals.input)} / 输出 {fmtNum(summary.totals.output)}
+                          {summary.totals.cached > 0 && ` / 缓存 ${fmtNum(summary.totals.cached)}`}
+                        </span>
+                      </div>
+                      <div className="usage-card">
+                        <span className="usage-card-label">失败请求</span>
+                        <span className={`usage-card-num ${summary.totals.errors ? 'bad' : ''}`}>
+                          {fmtNum(summary.totals.errors)}
+                        </span>
+                        <span className="usage-card-sub">HTTP 错误或未连通</span>
+                      </div>
+                      <div className="usage-card">
+                        <span className="usage-card-label">平均耗时</span>
+                        <span className="usage-card-num">{fmtDur(summary.totals.avgDurationMs)}</span>
+                        <span className="usage-card-sub">单次请求</span>
+                      </div>
+                    </div>
+
+                    <div className="settings-section">
+                      <h4>模型分布</h4>
+                      <div className="donut-wrap">
+                        <div className="donut" style={{ background: donut.gradient }}>
+                          <div className="donut-hole">
+                            <b>{fmtNum(summary.totals.total)}</b>
+                            <span>tokens</span>
+                          </div>
+                        </div>
+                        <div className="donut-table">
+                          <div className="donut-row head">
+                            <span>模型</span>
+                            <span>请求</span>
+                            <span>输入</span>
+                            <span>输出</span>
+                            <span>Token</span>
+                          </div>
+                          {donut.segments.map((s) => (
+                            <div className="donut-row" key={`${s.provider}/${s.model}`}>
+                              <span className="donut-model">
+                                <i className="donut-dot" style={{ background: s.color }} />
+                                <code>{s.model}</code>
+                                {s.provider && <span className="donut-provider">{s.provider}</span>}
+                              </span>
+                              <span>{s.requests}</span>
+                              <span>{s.input ? fmtNum(s.input) : '—'}</span>
+                              <span>{s.output ? fmtNum(s.output) : '—'}</span>
+                              <b>{fmtNum(s.total)}</b>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="settings-section">
+                      <h4>Token 使用趋势</h4>
+                      <div className="trend-legend">
+                        <span>
+                          <i className="trend-key input" /> 输入
+                        </span>
+                        <span>
+                          <i className="trend-key output" /> 输出
+                        </span>
+                      </div>
+                      <TrendChart daily={summary.daily} />
+                    </div>
+
+                    <div className="settings-section">
+                      <h4>按厂商</h4>
+                      <div className="donut-table">
+                        <div className="donut-row head">
+                          <span>供应商</span>
+                          <span>请求</span>
+                          <span>输入</span>
+                          <span>输出</span>
+                          <span>Token</span>
+                        </div>
+                        {summary.byProvider.map((p) => (
+                          <div className="donut-row" key={p.providerId || p.name}>
+                            <span className="donut-model">
+                              <span className="usage-name">{p.name}</span>
+                              <span className="tag">{agentLabel(p.target)}</span>
+                              {p.errors > 0 && <span className="tag danger">{p.errors} 失败</span>}
+                            </span>
+                            <span>{p.requests}</span>
+                            <span>{fmtNum(p.input)}</span>
+                            <span>{fmtNum(p.output)}</span>
+                            <b>{fmtNum(p.total)}</b>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {summary.recent.length > 0 && (
+                      <div className="settings-section">
+                        <h4>最近调用</h4>
+                        <div className="usage-table">
+                          {summary.recent.slice(0, 10).map((e, i) => (
+                            <div className={`usage-event-row ${e.ok === false ? 'failed' : ''}`} key={`${e.ts}-${i}`}>
+                              <span className="usage-event-time">{fmtTime(e.ts)}</span>
+                              <span className="usage-name">{e.providerName}</span>
+                              <code>{e.model || '—'}</code>
+                              <span className="usage-row-nums">
+                                {e.ok === false ? (
+                                  <span className="tag danger">{e.status || '失败'}</span>
+                                ) : (
+                                  <>
+                                    <span>{fmtDur(e.durationMs || 0)}</span>
+                                    <b>{fmtNum(e.total)} tokens</b>
+                                  </>
+                                )}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
           </div>
-        )}
+        </div>
       </div>
     </div>
   );
