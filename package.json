@@ -1,7 +1,7 @@
 {
   "name": "cc-switch-lite",
   "private": true,
-  "version": "0.4.2",
+  "version": "0.4.3",
   "type": "module",
   "description": "更简洁的 LLM 供应商切换器：根据 Base URL 自动发现模型，一键应用到 Claude Code / Codex CLI",
   "main": "electron/main.mjs",
@@ -29,6 +29,7 @@
     "asarUnpack": [
       "server/**"
     ],
+    "afterPack": "scripts/after-pack.mjs",
     "publish": [
       {
         "provider": "github",
@@ -71,6 +72,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "^31.7.7",
     "electron-builder": "^25.1.8",
+    "rcedit": "^5.0.2",
     "sharp": "^0.35.3",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"

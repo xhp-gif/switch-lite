@@ -156,3 +156,29 @@ test('stripUnsupportedTools：剥离 namespace/custom 工具并降级 tool_choic
   assert.equal(stripUnsupportedTools('not json'), 'not json');
   assert.equal(stripUnsupportedTools('{"model":"x"}'), '{"model":"x"}');
 });
+
+test('stripUnsupportedTools：custom_tool_call 记录转成 function_call，陌生条目丢弃', () => {
+  const body = JSON.stringify({
+    model: 'glm-4.6',
+    input: [
+      { type: 'message', role: 'user', content: '改一下代码' },
+      { role: 'assistant', content: '好的' }, // 无 type 简写：保留
+      { type: 'custom_tool_call', id: 'ctc_1', call_id: 'call_1', name: 'apply_patch', input: '*** Begin Patch\n...\n*** End Patch' },
+      { type: 'custom_tool_call_output', call_id: 'call_1', output: 'patched' },
+      { type: 'local_shell_call', call_id: 'call_2', action: { command: ['ls'] } },
+      { type: 'reasoning', id: 'r1', summary: [] },
+      { type: 'function_call', call_id: 'call_3', name: 'shell', arguments: '{}' },
+    ],
+  });
+  const out = JSON.parse(stripUnsupportedTools(body));
+  assert.deepEqual(
+    out.input.map((i) => i.type || 'shorthand'),
+    ['message', 'shorthand', 'function_call', 'function_call_output', 'reasoning', 'function_call'],
+    'custom_tool_call(_output) 转换、local_shell_call 丢弃、其余保留',
+  );
+  const converted = out.input[2];
+  assert.equal(converted.call_id, 'call_1');
+  assert.equal(converted.name, 'apply_patch');
+  assert.equal(converted.arguments, '*** Begin Patch\n...\n*** End Patch');
+  assert.equal(out.input[3].output, 'patched');
+});

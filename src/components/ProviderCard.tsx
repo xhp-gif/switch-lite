@@ -7,12 +7,13 @@ interface Props {
   busy: boolean;
   speedtesting: boolean;
   onSetActive: (id: string) => void;
+  onSwitchModel: (p: Provider, modelId: string) => void;
   onSpeedtest: (id: string) => void;
   onEdit: (p: Provider) => void;
   onDelete: (id: string) => void;
 }
 
-export function ProviderCard({ provider, preset, active, busy, speedtesting, onSetActive, onSpeedtest, onEdit, onDelete }: Props) {
+export function ProviderCard({ provider, preset, active, busy, speedtesting, onSetActive, onSwitchModel, onSpeedtest, onEdit, onDelete }: Props) {
   const st = provider.lastSpeedtest;
   return (
     <div className={`provider-card ${active ? 'active' : ''}`}>
@@ -39,6 +40,20 @@ export function ProviderCard({ provider, preset, active, busy, speedtesting, onS
           </span>
           <span>Key：{maskKey(provider.apiKey)}</span>
         </div>
+        {provider.models.length > 0 && (
+          <div className="pc-models" title="点击模型名直接切换（重启 Agent 会话生效）">
+            {provider.models.map((m) => (
+              <button
+                key={m.id}
+                className={`model-chip ${provider.selectedModel === m.id ? 'active' : ''}`}
+                disabled={busy}
+                onClick={() => onSwitchModel(provider, m.id)}
+              >
+                {m.id}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <div className="pc-actions">
         {!active && (

@@ -3,7 +3,8 @@
 //    所有 Agent（Codex / Claude Code / Gemini / OpenCode / Hermes）的调用都经此计量 token 用量。
 // 2) 旧路由 /v2（relay.json）：兼容早期写入的 Codex 配置，只做工具剥离透传。
 // 工具剥离：Codex 桌面端会把应用自带的 namespace/custom 工具带进请求，
-// 部分第三方网关（如千帆）只接受 function/mcp/knowledge_search，转发前剥掉。
+// 部分第三方网关（如千帆）只接受 function/mcp/knowledge_search，转发前剥掉；
+// 续聊回放里的 custom_tool_call 记录同步转成 function_call，避免网关 400。
 import http from 'node:http';
 import https from 'node:https';
 import fs from 'node:fs';
@@ -32,6 +33,17 @@ const STRICT_HOSTS = [
 
 const ALLOWED_TOOL_TYPES = new Set(['function', 'mcp', 'knowledge_search']);
 
+// 严格网关能接受的 Responses input 条目类型（以智谱报错信息为准，其余网关是其子集）
+const ALLOWED_INPUT_TYPES = new Set([
+  'message',
+  'reasoning',
+  'function_call',
+  'function_call_output',
+  'mcp_list_tools',
+  'mcp_call',
+  'knowledge_search_call',
+]);
+
 function relayConfFile() {
   const home = process.env.CCS_LITE_HOME ? path.resolve(process.env.CCS_LITE_HOME) : path.join(os.homedir(), '.cc-switch-lite');
   return path.join(home, 'relay.json');
@@ -57,16 +69,53 @@ export function needsToolStrip(upstream, method, pathOnly) {
 export function stripUnsupportedTools(body) {
   try {
     const obj = JSON.parse(body);
-    if (!obj || !Array.isArray(obj.tools)) return body;
-    obj.tools = obj.tools.filter((t) => t && ALLOWED_TOOL_TYPES.has(t.type));
-    if (obj.tool_choice && typeof obj.tool_choice === 'object' && obj.tool_choice.type === 'function') {
-      const name = obj.tool_choice.function?.name;
-      if (name && !obj.tools.some((t) => t.name === name)) obj.tool_choice = 'auto';
+    if (!obj || typeof obj !== 'object') return body;
+    if (Array.isArray(obj.tools)) {
+      obj.tools = obj.tools.filter((t) => t && ALLOWED_TOOL_TYPES.has(t.type));
+      if (obj.tool_choice && typeof obj.tool_choice === 'object' && obj.tool_choice.type === 'function') {
+        const name = obj.tool_choice.function?.name;
+        if (name && !obj.tools.some((t) => t.name === name)) obj.tool_choice = 'auto';
+      }
     }
+    sanitizeInputItems(obj);
     return JSON.stringify(obj);
   } catch {
     return body;
   }
+}
+
+// 新版 Codex 会在续聊时把 custom_tool_call（apply_patch 等自定义工具的调用记录）
+// 回放进 input，严格网关直接 400：转成等价的 function_call，其余网关不认识的条目丢弃。
+function sanitizeInputItems(obj) {
+  if (!Array.isArray(obj.input)) return;
+  const out = [];
+  for (const it of obj.input) {
+    if (!it || typeof it !== 'object' || !it.type) {
+      out.push(it); // 简写消息（{role, content}）等无 type 条目原样保留
+      continue;
+    }
+    if (it.type === 'custom_tool_call') {
+      out.push({
+        type: 'function_call',
+        ...(it.id ? { id: it.id } : {}),
+        call_id: it.call_id || it.id || '',
+        name: it.name || 'custom_tool',
+        arguments: typeof it.input === 'string' ? it.input : JSON.stringify(it.input ?? ''),
+      });
+      continue;
+    }
+    if (it.type === 'custom_tool_call_output') {
+      out.push({
+        type: 'function_call_output',
+        call_id: it.call_id || '',
+        output: typeof it.output === 'string' ? it.output : JSON.stringify(it.output ?? ''),
+      });
+      continue;
+    }
+    if (!ALLOWED_INPUT_TYPES.has(it.type)) continue; // local_shell_call / web_search_call 等
+    out.push(it);
+  }
+  obj.input = out;
 }
 
 // ---------- 用量解析（纯函数，可单测） ----------

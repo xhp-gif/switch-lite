@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
 import { AGENTS, agentName } from './agents';
-import type { HistoryEntry, Preset, Provider, Settings, Target } from './types';
+import type { Preset, Provider, Settings, Target } from './types';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AGENT_THEME, AgentIcon } from './components/AgentIcon';
 import switchliteIcon from './assets/logos/switchlite.png';
@@ -36,7 +36,6 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [speedtesting, setSpeedtesting] = useState<Record<string, boolean>>({});
   const [speedtestingAll, setSpeedtestingAll] = useState(false);
-  const [history, setHistory] = useState<HistoryEntry[]>([]);
 
   const notify = useCallback((kind: 'ok' | 'err', text: string) => {
     setToast({ kind, text });
@@ -50,19 +49,6 @@ export default function App() {
   const refreshSettings = useCallback(async () => {
     setSettings(await api.getSettings());
   }, []);
-
-  const refreshHistory = useCallback(async (target: Target) => {
-    try {
-      const r = await api.history(target);
-      setHistory(r.history);
-    } catch {
-      setHistory([]);
-    }
-  }, []);
-
-  useEffect(() => {
-    refreshHistory(agent);
-  }, [agent, refreshHistory]);
 
   useEffect(() => {
     api
@@ -98,7 +84,7 @@ export default function App() {
       let provider = providers.find((p) => p.target === agent && stripSlash(p.baseUrl) === stripSlash(baseUrl));
       provider = provider ? await api.updateProvider(provider.id, patch) : await api.createProvider(patch);
       const r = await api.applyConfig(provider.id, agent, modelId);
-      await Promise.all([refreshProviders(), refreshSettings(), refreshHistory(agent)]);
+      await Promise.all([refreshProviders(), refreshSettings()]);
       notify('ok', `已接入 ${agentName(agent)}：${modelId}（${r.file}）`);
     } catch (e: unknown) {
       notify('err', (e as Error).message);
@@ -118,7 +104,7 @@ export default function App() {
     setBusy(true);
     try {
       const r = await api.applyConfig(p.id, agent, p.selectedModel);
-      await Promise.all([refreshProviders(), refreshSettings(), refreshHistory(agent)]);
+      await Promise.all([refreshProviders(), refreshSettings()]);
       notify('ok', `已切换为当前：${p.selectedModel}（${r.file}）`);
     } catch (e: unknown) {
       notify('err', (e as Error).message);
@@ -178,13 +164,14 @@ export default function App() {
     }
   };
 
-  // 切换历史：一键切回某个模型（用当时调通的供应商重新写入配置）
-  const handleHistorySwitch = async (entry: HistoryEntry) => {
+  // 卡片内点模型直接切换：写入配置并设为当前
+  const handleSwitchModel = async (provider: Provider, modelId: string) => {
+    if (provider.selectedModel === modelId && settings?.active?.[agent] === provider.id) return;
     setBusy(true);
     try {
-      await api.applyConfig(entry.providerId, agent, entry.model);
-      await Promise.all([refreshProviders(), refreshSettings(), refreshHistory(agent)]);
-      notify('ok', `已切换为：${entry.model}（重启 ${agentName(agent)} 会话生效，历史对话用 resume 续上）`);
+      await api.applyConfig(provider.id, agent, modelId);
+      await Promise.all([refreshProviders(), refreshSettings()]);
+      notify('ok', `已切换为：${modelId}（重启 ${agentName(agent)} 会话生效）`);
     } catch (e: unknown) {
       notify('err', (e as Error).message);
     } finally {
@@ -273,6 +260,7 @@ export default function App() {
                     busy={busy}
                     speedtesting={!!speedtesting[p.id] || speedtestingAll}
                     onSetActive={handleSetActive}
+                    onSwitchModel={handleSwitchModel}
                     onSpeedtest={handleSpeedtest}
                     onEdit={setEditing}
                     onDelete={handleDelete}
@@ -292,34 +280,6 @@ export default function App() {
               </div>
             )}
           </section>
-
-          {history.length > 0 && (
-            <section className="card">
-              <div className="card-head">
-                <h3>切换历史</h3>
-                <span className="count">{history.length} 个模型</span>
-                <span className="hint">按模型去重，点击即切回</span>
-              </div>
-              <div className="history-list">
-                {history.map((h) => {
-                  const isCurrent = h.available && activeProvider?.id === h.providerId && activeProvider?.selectedModel === h.model;
-                  return (
-                    <button
-                      key={h.model}
-                      className={`history-row ${isCurrent ? 'current' : ''}`}
-                      disabled={busy || !h.available || isCurrent}
-                      onClick={() => handleHistorySwitch(h)}
-                      title={h.available ? `经「${h.providerName}」接入 ${h.model}` : '该供应商已删除'}
-                    >
-                      <code className="history-model">{h.model}</code>
-                      <span className="history-provider">{h.providerName}</span>
-                      {isCurrent ? <span className="tag accent">当前</span> : <span className="history-go">切换</span>}
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          )}
         </main>
       </div>
 
