@@ -91,7 +91,7 @@ export function authFor(protocol) {
   return 'bearer';
 }
 
-function headersFor(protocol, apiKey) {
+export function headersFor(protocol, apiKey) {
   const headers = { 'User-Agent': 'SwitchLite/0.1', Accept: 'application/json' };
   if (!apiKey) return headers;
   const auth = authFor(protocol);

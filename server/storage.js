@@ -57,6 +57,7 @@ const UPDATE_KEYS = [
   'fetchedAt',
   'lastFetchError',
   'lastApplied',
+  'lastSpeedtest',
 ];
 
 export function createProvider(body = {}) {
@@ -128,12 +129,24 @@ function settingsFilePath() {
 
 export function getSettings() {
   try {
-    if (!fs.existsSync(settingsFilePath())) return { active: {} };
+    if (!fs.existsSync(settingsFilePath())) return { active: {}, failover: true };
     const s = JSON.parse(fs.readFileSync(settingsFilePath(), 'utf8'));
-    return { active: s.active && typeof s.active === 'object' ? s.active : {} };
+    return {
+      ...s,
+      active: s.active && typeof s.active === 'object' ? s.active : {},
+      failover: s.failover !== false, // 缺省开启
+    };
   } catch {
-    return { active: {} };
+    return { active: {}, failover: true };
   }
+}
+
+// 通用设置更新（目前只有 failover 开关；active 走 setActiveProvider）
+export function updateSettings(patch = {}) {
+  const settings = getSettings();
+  if (typeof patch.failover === 'boolean') settings.failover = patch.failover;
+  saveSettings(settings);
+  return settings;
 }
 
 function saveSettings(settings) {

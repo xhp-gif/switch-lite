@@ -1,7 +1,7 @@
 {
   "name": "cc-switch-lite",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.4.0",
   "type": "module",
   "description": "更简洁的 LLM 供应商切换器：根据 Base URL 自动发现模型，一键应用到 Claude Code / Codex CLI",
   "main": "electron/main.mjs",
@@ -29,6 +29,13 @@
     "asarUnpack": [
       "server/**"
     ],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "xhp-gif",
+        "repo": "switch-lite"
+      }
+    ],
     "directories": {
       "output": "release"
     },
@@ -52,6 +59,7 @@
     }
   },
   "dependencies": {
+    "electron-updater": "^6.8.9",
     "express": "^4.21.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

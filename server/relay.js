@@ -9,7 +9,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { getProvider } from './storage.js';
+import { getProvider, listProviders, getSettings } from './storage.js';
 import { appendUsage } from './usage.js';
 
 export const RELAY_PORT = Number(process.env.CCS_RELAY_PORT || 4180);
@@ -175,44 +175,111 @@ export function extractUsage(protocol, reqPath, reqBody, respText) {
   }
 }
 
+// ---------- 熔断器（进程内，重启即重置） ----------
+// 连续失败 FAIL_THRESHOLD 次 → 熔断 OPEN_MS，期间该供应商被备选链跳过；
+// 熔断期满放行一个试探请求（半开），成功则复位。
+const FAIL_THRESHOLD = 3;
+const OPEN_MS = 120_000;
+const breakers = new Map(); // providerId -> { fails, openUntil }
+
+export function breakerState(providerId, now = Date.now()) {
+  const b = breakers.get(providerId);
+  if (!b) return { open: false, fails: 0 };
+  if (b.fails >= FAIL_THRESHOLD && now < b.openUntil) return { open: true, fails: b.fails };
+  return { open: false, fails: b.fails };
+}
+
+export function recordAttempt(providerId, ok, now = Date.now()) {
+  if (ok) {
+    breakers.delete(providerId);
+    return;
+  }
+  const b = breakers.get(providerId) || { fails: 0, openUntil: 0 };
+  b.fails += 1;
+  if (b.fails >= FAIL_THRESHOLD) b.openUntil = now + OPEN_MS;
+  breakers.set(providerId, b);
+}
+
 // ---------- 转发 ----------
 
-function forward(req, res, { upstream, headers, body, onDone }) {
-  const u = new URL(upstream);
-  const transport = u.protocol === 'https:' ? https : http;
-  const r2 = transport.request(
-    {
-      hostname: u.hostname,
-      port: u.port || (u.protocol === 'https:' ? 443 : 80),
-      path: u.pathname + u.search,
-      method: req.method,
-      headers,
-    },
-    (res2) => {
-      res.writeHead(res2.statusCode, res2.headers);
-      res2.pipe(res);
-      // 计量 tap：旁路累积响应文本，绝不影响透传
-      if (onDone) {
+// 可转移的失败：网络错误、限流、网关/服务端错误、超时
+function isFailoverStatus(status) {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+const BUFFER_LIMIT = 64 * 1024; // 错误响应缓冲上限，超过则只能原样转发（无法转移）
+
+/**
+ * 单次转发尝试。返回 Promise：
+ * - {committed:true, status, respText}：响应已开始流式透传（成功或超大错误体）
+ * - {committed:false, status, respText}：错误响应已缓冲，未发给客户端，可换备用重试
+ * - {committed:false, networkError}：网络层失败，可换备用重试
+ */
+function tryForward(req, res, { upstream, headers, body }) {
+  return new Promise((resolve) => {
+    const u = new URL(upstream);
+    const transport = u.protocol === 'https:' ? https : http;
+    const r2 = transport.request(
+      {
+        hostname: u.hostname,
+        port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        path: u.pathname + u.search,
+        method: req.method,
+        headers,
+      },
+      (res2) => {
+        const status = res2.statusCode || 502;
+        if (isFailoverStatus(status)) {
+          // 先缓冲：小于上限则完整收下（不发给客户端），超过则降级为原样透传
+          let captured = '';
+          let overflow = false;
+          res2.on('data', (c) => {
+            if (!overflow) {
+              captured += c.toString('utf8');
+              if (captured.length > BUFFER_LIMIT) {
+                overflow = true;
+                res.writeHead(status, res2.headers);
+                res.write(captured.slice(0, BUFFER_LIMIT));
+              }
+            } else {
+              res.write(c);
+            }
+          });
+          res2.on('end', () => {
+            if (overflow) {
+              res.end();
+              resolve({ committed: true, status, respText: captured.slice(0, BUFFER_LIMIT) });
+            } else {
+              resolve({ committed: false, status, respText: captured });
+            }
+          });
+          res2.on('error', () => {
+            if (!overflow) resolve({ committed: false, networkError: '上游连接中断' });
+            else {
+              res.end();
+              resolve({ committed: true, status, respText: captured });
+            }
+          });
+          return;
+        }
+        // 非可转移状态：立即流式透传 + 计量 tap
+        res.writeHead(status, res2.headers);
+        res2.pipe(res);
         let captured = '';
         res2.on('data', (c) => {
           if (captured.length < 2 * 1024 * 1024) captured += c.toString('utf8');
         });
-        res2.on('end', () => {
-          try {
-            onDone(res2.statusCode, captured);
-          } catch {
-            /* 计量失败静默 */
-          }
+        res2.on('end', () => resolve({ committed: true, status, respText: captured }));
+        res2.on('error', () => {
+          res.end();
+          resolve({ committed: true, status, respText: captured });
         });
-      }
-    },
-  );
-  r2.on('error', (e) => {
-    res.writeHead(502, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: e.message }));
+      },
+    );
+    r2.on('error', (e) => resolve({ committed: false, networkError: e.message }));
+    r2.write(body);
+    r2.end();
   });
-  r2.write(body);
-  r2.end();
 }
 
 function readBody(req, cb) {
@@ -224,6 +291,22 @@ function readBody(req, cb) {
   req.on('end', () => cb(body));
 }
 
+// 备选链：同 Agent 下「模型列表包含本次请求模型」的其他供应商，跳过熔断中的
+export function failoverChain(primaryId, model, allProviders, now = Date.now()) {
+  const primary = allProviders.find((p) => p.id === primaryId);
+  const chain = [];
+  for (const p of allProviders) {
+    if (p.id === primaryId || !p.baseUrl) continue;
+    if (primary && p.target !== primary.target) continue;
+    const models = Array.isArray(p.models) ? p.models : [];
+    if (!models.length) continue; // 从未抓取过模型列表的无法确认是否支持，不纳入
+    if (model && !models.some((m) => m && m.id === model)) continue;
+    if (breakerState(p.id, now).open) continue;
+    chain.push(p);
+  }
+  return chain;
+}
+
 // 通用路由：/p/<providerId>/<rest...>
 function handleProviderRoute(req, res, providerId, restWithQuery) {
   const provider = getProvider(providerId);
@@ -232,56 +315,99 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
     res.end(JSON.stringify({ error: 'relay：供应商不存在或已删除，请在 SwitchLite 中重新接入' }));
     return;
   }
-  const protocol = provider.protocol || 'openai';
-  let upstream = protocol === 'anthropic' ? provider.anthropicUrl || provider.baseUrl : provider.baseUrl;
-  upstream = String(upstream).replace(/\/+$/, '');
-  // Gemini SDK 会自带 /v1beta 版本路径，上游 base 里若已包含则去掉避免重复
-  if (protocol === 'gemini') upstream = upstream.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '');
 
-  readBody(req, (body) => {
-    let outBody = body;
+  readBody(req, async (body) => {
     const pathOnly = restWithQuery.split('?')[0];
-    if (needsToolStrip(upstream, req.method, pathOnly)) {
-      outBody = stripUnsupportedTools(body);
+    const protocol = provider.protocol || 'openai';
+    const reqModel = modelFromRequest(protocol, pathOnly, body);
+
+    // 组装尝试链：主供应商（若在熔断中且故障转移开启，直接越过）+ 备选
+    let chain = [provider];
+    const failoverOn = getSettings().failover !== false;
+    if (failoverOn) {
+      const backups = failoverChain(provider.id, reqModel, listProviders());
+      chain = breakerState(provider.id).open ? backups : [provider, ...backups];
+      if (!chain.length) chain = [provider]; // 备选全熔断时仍用主供应商兜底
     }
-    const headers = { ...req.headers };
-    delete headers.authorization;
-    delete headers['x-api-key'];
-    delete headers['x-goog-api-key'];
-    if (provider.apiKey) {
-      if (protocol === 'anthropic') headers['x-api-key'] = provider.apiKey;
-      else if (protocol === 'gemini') headers['x-goog-api-key'] = provider.apiKey;
-      else headers.authorization = `Bearer ${provider.apiKey}`;
-    }
-    const target = `${upstream}/${restWithQuery}`;
-    headers.host = new URL(target).host;
-    headers['content-length'] = Buffer.byteLength(outBody);
-    const startedAt = Date.now();
-    forward(req, res, {
-      upstream: target,
-      headers,
-      body: outBody,
-      onDone: (status, respText) => {
-        const usage = extractUsage(protocol, pathOnly, body, respText);
+
+    let lastResult = null;
+    let lastProvider = provider;
+    for (let i = 0; i < chain.length; i++) {
+      const p = chain[i];
+      const isLast = i === chain.length - 1;
+      const proto = p.protocol || 'openai';
+      let upstream = proto === 'anthropic' ? p.anthropicUrl || p.baseUrl : p.baseUrl;
+      upstream = String(upstream).replace(/\/+$/, '');
+      // Gemini SDK 会自带 /v1beta 版本路径，上游 base 里若已包含则去掉避免重复
+      if (proto === 'gemini') upstream = upstream.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '');
+
+      let outBody = body;
+      if (needsToolStrip(upstream, req.method, pathOnly)) {
+        outBody = stripUnsupportedTools(body);
+      }
+      const headers = { ...req.headers };
+      delete headers.authorization;
+      delete headers['x-api-key'];
+      delete headers['x-goog-api-key'];
+      if (p.apiKey) {
+        if (proto === 'anthropic') headers['x-api-key'] = p.apiKey;
+        else if (proto === 'gemini') headers['x-goog-api-key'] = p.apiKey;
+        else headers.authorization = `Bearer ${p.apiKey}`;
+      }
+      const target = `${upstream}/${restWithQuery}`;
+      headers.host = new URL(target).host;
+      headers['content-length'] = Buffer.byteLength(outBody);
+
+      const startedAt = Date.now();
+      const result = await tryForward(req, res, { upstream: target, headers, body: outBody });
+      const status = result.networkError ? 502 : result.status;
+      lastResult = result;
+      lastProvider = p;
+
+      const ok = !result.networkError && status < 400;
+      recordAttempt(p.id, ok);
+
+      // 计量：每次尝试都是真实调用，各记一条
+      try {
+        const usage = extractUsage(proto, pathOnly, body, result.respText || '');
         appendUsage({
-          providerId: provider.id,
-          providerName: provider.name,
-          target: provider.target,
-          model: usage?.model || modelFromRequest(protocol, pathOnly, body),
+          providerId: p.id,
+          providerName: p.name,
+          target: p.target,
+          model: usage?.model || modelFromRequest(proto, pathOnly, body),
           input: usage?.input || 0,
           output: usage?.output || 0,
           total: usage?.total || 0,
           cached: usage?.cached || 0,
           durationMs: Date.now() - startedAt,
           status,
-          ok: status < 400,
+          ok,
+          retried: !ok && !result.committed && !isLast ? true : undefined,
+          failoverFrom: ok && i > 0 ? provider.name : undefined,
+          failoverTo: ok && i > 0 ? p.name : undefined,
         });
-      },
-    });
+      } catch {
+        /* 计量失败静默 */
+      }
+
+      if (result.committed) return; // 已透传（成功或超大错误体），结束
+      if (result.networkError && isLast) break;
+      if (!result.networkError && !isFailoverStatus(status)) break; // 理论到不了，防御
+      if (isLast) break;
+      // 未提交的可转移失败：继续下一个备选
+    }
+
+    // 所有尝试均未提交：把最后一次失败原样回给客户端
+    const status = lastResult.networkError ? 502 : lastResult.status;
+    const payload = lastResult.networkError
+      ? JSON.stringify({ error: `relay：${lastResult.networkError}` })
+      : lastResult.respText || JSON.stringify({ error: `上游错误（${lastProvider.name}）` });
+    res.writeHead(status, { 'content-type': 'application/json' });
+    res.end(payload);
   });
 }
 
-// 旧路由：relay.json 直通（早期写入的 Codex 配置）
+// 旧路由：relay.json 直通（早期写入的 Codex 配置），无故障转移、不计量
 function handleLegacyRoute(req, res) {
   const conf = readRelayConf();
   if (!conf || !conf.upstream) {
@@ -289,7 +415,7 @@ function handleLegacyRoute(req, res) {
     res.end(JSON.stringify({ error: 'relay 未配置：请先在 SwitchLite 中接入 Codex 供应商' }));
     return;
   }
-  readBody(req, (body) => {
+  readBody(req, async (body) => {
     let outBody = body;
     if (needsToolStrip(conf.upstream, req.method, req.url)) {
       outBody = stripUnsupportedTools(body);
@@ -297,7 +423,13 @@ function handleLegacyRoute(req, res) {
     const u = new URL(String(conf.upstream).replace(/\/+$/, '') + (req.url || '/'));
     const headers = { ...req.headers, host: u.host, 'content-length': Buffer.byteLength(outBody) };
     if (conf.apiKey) headers.authorization = `Bearer ${conf.apiKey}`;
-    forward(req, res, { upstream: u.toString(), headers, body: outBody, onDone: null });
+    const result = await tryForward(req, res, { upstream: u.toString(), headers, body: outBody });
+    if (!result.committed) {
+      const status = result.networkError ? 502 : result.status;
+      const payload = result.networkError ? JSON.stringify({ error: result.networkError }) : result.respText || '';
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(payload);
+    }
   });
 }
 

@@ -125,9 +125,21 @@ export function SettingsModal({ onClose, onError }: Props) {
   const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [loading, setLoading] = useState(false);
   const [autostart, setAutostart] = useState<{ supported: boolean; enabled: boolean } | null>(null);
+  const [failover, setFailover] = useState<boolean | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<{ state: string; version?: string; percent?: number; message?: string } | null>(null);
+  const desktop = typeof window !== 'undefined' ? window.switchliteDesktop : undefined;
+
+  useEffect(() => {
+    if (!desktop) return;
+    return desktop.onUpdateStatus((s) => setUpdateStatus(s));
+  }, [desktop]);
 
   useEffect(() => {
     api.getRelayAutostart().then(setAutostart).catch(() => setAutostart(null));
+    api
+      .getSettings()
+      .then((s) => setFailover(s.failover !== false))
+      .catch(() => setFailover(null));
   }, []);
 
   const loadUsage = useCallback(
@@ -159,6 +171,27 @@ export function SettingsModal({ onClose, onError }: Props) {
       setAutostart(await api.setRelayAutostart(!autostart.enabled));
     } catch (e: unknown) {
       onError((e as Error).message);
+    }
+  };
+
+  const toggleFailover = async () => {
+    if (failover === null) return;
+    try {
+      const s = await api.updateSettings({ failover: !failover });
+      setFailover(s.failover !== false);
+    } catch (e: unknown) {
+      onError((e as Error).message);
+    }
+  };
+
+  const checkUpdate = async () => {
+    if (!desktop) return;
+    setUpdateStatus({ state: 'checking' });
+    try {
+      const r = await desktop.checkUpdate();
+      if (r.state === 'downloaded') setUpdateStatus(r);
+    } catch (e: unknown) {
+      setUpdateStatus({ state: 'error', message: (e as Error).message });
     }
   };
 
@@ -237,6 +270,17 @@ export function SettingsModal({ onClose, onError }: Props) {
                       </span>
                     </label>
                   )}
+                  {failover !== null && (
+                    <label className="autostart-row">
+                      <input type="checkbox" checked={failover} onChange={toggleFailover} />
+                      <span>
+                        <b>故障自动切换</b>
+                        <span className="autostart-desc">
+                          当前供应商超时/限流/故障时，自动改用同一 Agent 下接入了相同模型的其他供应商；连续失败 3 次的供应商会熔断 2 分钟
+                        </span>
+                      </span>
+                    </label>
+                  )}
                   <div className="alert info">
                     中继是独立常驻进程：关闭 SwitchLite 窗口后 Agent 照常可用，用量也会持续记录（统计为旁路采集，不影响调用速度），下次打开看板即可查看。
                   </div>
@@ -247,8 +291,41 @@ export function SettingsModal({ onClose, onError }: Props) {
                   <div className="settings-info">
                     <div className="info-row">
                       <span className="info-label">版本</span>
-                      <span>v{APP_VERSION}</span>
+                      <span>
+                        v{APP_VERSION}
+                        {desktop ? (
+                          updateStatus?.state === 'downloaded' ? (
+                            <button className="btn small" onClick={() => desktop.quitAndInstall()}>
+                              重启更新到 v{updateStatus.version}
+                            </button>
+                          ) : (
+                            <button
+                              className="btn ghost small"
+                              disabled={updateStatus?.state === 'checking' || updateStatus?.state === 'downloading'}
+                              onClick={checkUpdate}
+                            >
+                              {updateStatus?.state === 'checking'
+                                ? '检查中…'
+                                : updateStatus?.state === 'downloading'
+                                  ? `下载中 ${updateStatus.percent ?? 0}%`
+                                  : '检查更新'}
+                            </button>
+                          )
+                        ) : null}
+                      </span>
                     </div>
+                    {updateStatus?.state === 'latest' && (
+                      <div className="info-row">
+                        <span className="info-label" />
+                        <span className="muted-text">已是最新版本</span>
+                      </div>
+                    )}
+                    {updateStatus?.state === 'error' && (
+                      <div className="info-row">
+                        <span className="info-label" />
+                        <span className="muted-text">检查更新失败：{updateStatus.message}</span>
+                      </div>
+                    )}
                     <div className="info-row">
                       <span className="info-label">数据目录</span>
                       <code>~/.cc-switch-lite</code>
@@ -404,7 +481,24 @@ export function SettingsModal({ onClose, onError }: Props) {
                           {summary.recent.slice(0, 10).map((e, i) => (
                             <div className={`usage-event-row ${e.ok === false ? 'failed' : ''}`} key={`${e.ts}-${i}`}>
                               <span className="usage-event-time">{fmtTime(e.ts)}</span>
-                              <span className="usage-name">{e.providerName}</span>
+                              <span className="usage-name">
+                                {e.providerName}
+                                {e.source === 'session' && (
+                                  <span className="tag" title="来自 Agent 本地会话日志（回填数据，无耗时/供应商归属）">
+                                    日志
+                                  </span>
+                                )}
+                                {e.retried && (
+                                  <span className="tag warn" title="该次调用失败，请求已自动转移到备用供应商">
+                                    已转移
+                                  </span>
+                                )}
+                                {e.failoverTo && (
+                                  <span className="tag accent" title={`主供应商「${e.failoverFrom}」故障，本次由备用供应商完成`}>
+                                    备用接管
+                                  </span>
+                                )}
+                              </span>
                               <code>{e.model || '—'}</code>
                               <span className="usage-row-nums">
                                 {e.ok === false ? (

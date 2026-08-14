@@ -5,12 +5,15 @@ interface Props {
   preset: Preset | null;
   active: boolean;
   busy: boolean;
+  speedtesting: boolean;
   onSetActive: (id: string) => void;
+  onSpeedtest: (id: string) => void;
   onEdit: (p: Provider) => void;
   onDelete: (id: string) => void;
 }
 
-export function ProviderCard({ provider, preset, active, busy, onSetActive, onEdit, onDelete }: Props) {
+export function ProviderCard({ provider, preset, active, busy, speedtesting, onSetActive, onSpeedtest, onEdit, onDelete }: Props) {
+  const st = provider.lastSpeedtest;
   return (
     <div className={`provider-card ${active ? 'active' : ''}`}>
       <div className="pc-main">
@@ -18,6 +21,16 @@ export function ProviderCard({ provider, preset, active, busy, onSetActive, onEd
           <span className="pc-name">{provider.name}</span>
           {preset && <span className="tag">{preset.name}</span>}
           {active && <span className="tag accent">当前</span>}
+          {speedtesting ? (
+            <span className="tag speed">测速中…</span>
+          ) : st ? (
+            <span
+              className={`tag speed ${st.ok ? (st.latencyMs < 300 ? 'fast' : st.latencyMs < 1000 ? 'mid' : 'slow') : 'dead'}`}
+              title={st.ok ? `${new Date(st.at).toLocaleString()} 测得` : st.error || '连接失败'}
+            >
+              {st.ok ? `${st.latencyMs}ms` : '不可达'}
+            </span>
+          ) : null}
         </div>
         <div className="pc-sub">
           <code>{provider.baseUrl || '未设置地址'}</code>
@@ -33,6 +46,9 @@ export function ProviderCard({ provider, preset, active, busy, onSetActive, onEd
             设为当前
           </button>
         )}
+        <button className="btn ghost" disabled={speedtesting} onClick={() => onSpeedtest(provider.id)} title="测试 API 端点响应速度（非模型推理速度）">
+          测速
+        </button>
         <button className="btn ghost" onClick={() => onEdit(provider)}>
           编辑
         </button>

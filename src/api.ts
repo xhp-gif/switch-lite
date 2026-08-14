@@ -53,4 +53,11 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ target, providerId }),
     }),
+  speedtest: (id: string) =>
+    req<{ ok: boolean; latencyMs: number; warning?: string; error?: string; provider: Provider }>(
+      `/api/providers/${id}/speedtest`,
+      { method: 'POST' },
+    ),
+  speedtestAll: () => req<{ providers: Provider[] }>('/api/speedtest', { method: 'POST' }),
+  updateSettings: (body: Partial<Settings>) => req<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
 };

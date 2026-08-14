@@ -6,9 +6,14 @@
 - 粘贴任意形式的 Base URL（`https://api.deepseek.com`、`https://xxx/v1`、甚至完整的 `/v1/chat/completions` 地址），自动归一化并尝试候选端点，无需手选协议路径。
 - 支持 OpenAI / Anthropic / Gemini 三类协议，内置阿里云百炼、DeepSeek、智谱 GLM、Moonshot Kimi、OpenRouter、硅基流动、火山方舟、Ollama 等预设。
 - 阿里云百炼这类模型特别多的厂商，默认展示「推荐」视图（DeepSeek / GLM / Kimi / 通义千问等常用系列），而不是把几百个模型一次性砸给你；需要时切到「全部」。
-- 供应商按 Agent 隔离管理，接入即写入对应配置并设为当前，写入前自动备份原文件。
+- 供应商按 Agent 隔离管理，接入即写入对应配置并设为当前，写入前自动备份原文件；**切换是事务式的**——多文件写入任一失败自动全部还原，不会留下"半新半旧"的配置。
 - 侧栏「设置」里可切换 浅色 / 深色 / 跟随系统 三种界面主题。
 - 所有 Agent 的请求经本地中继（`127.0.0.1:4180`）转发到真实供应商：中继按供应商注入鉴权、为严格网关剥离不兼容工具，并顺带计量每次调用的 token 用量——「设置 → 用量看板」里按厂商 / 模型查看请求数、输入输出 tokens、失败数与最近调用。**中继是独立常驻进程**：SwitchLite 启动时拉起后，即使关闭窗口 Agent 也照常可用、用量持续记录；「设置」里还可开启「开机自动启动中继」（Windows 登录后自动拉起，无需先开 SwitchLite）。
+- **故障自动切换**：当前供应商超时 / 限流（429）/ 服务端故障（5xx）时，自动改用同一 Agent 下接入了相同模型的其他供应商；连续失败 3 次的供应商熔断 2 分钟。设置里可关。
+- **双通道用量统计**：中继计量为主（含真实耗时、状态码、供应商归属），同时离线解析 Codex / Claude Code / Gemini CLI 的本地会话日志回填——中继停机期间、接入之前的历史也不留空洞，已与中继记录自动去重。OpenCode 用量存于 SQLite，暂不支持回填。
+- **测速**：供应商卡片一键测速（对 API 端点热身+计时），卡片上按延迟分色显示，方便选型。
+- **Claude 模型路由**：接入时自动写入 `ANTHROPIC_DEFAULT_HAIKU/SONNET/OPUS_MODEL`——主对话用所选模型，打杂任务（标题生成、历史压缩）自动路由到厂商的 flash/lite 系小模型；单模型厂商三档同指主模型，避免 "claude-haiku 不存在" 报错。
+- **自动更新**（安装版）：启动时和每 4 小时检查 GitHub Releases，下载完成后提示重启更新；「设置 → 关于」里也可手动检查。便携版不支持原地更新，请下载新版覆盖。
 
 ## 快速开始
 
@@ -48,7 +53,9 @@ server/
   registry.js       # URL 归一化 + 模型发现 + 推荐分组（核心，可单测）
   storage.js        # 供应商数据持久化（~/.cc-switch-lite/providers.json）
   usage.js          # 用量统计存储与聚合（~/.cc-switch-lite/usage.jsonl）
-  configWriter.js   # 写 Claude Code / Codex CLI 等配置，带自动备份；地址指向本地中继
+  sessionLogs.js    # 会话日志回填：解析 Codex/Claude/Gemini 本地会话，增量同步+与中继去重
+  speedtest.js      # 供应商测速（热身+计时 GET 模型端点）
+  configWriter.js   # 写 Claude Code / Codex CLI 等配置，带自动备份与失败回滚；地址指向本地中继
   hermesConfig.js   # 读写 Hermes Agent 的 config.yaml（YAML，保留注释与其它段）
   relay.js          # 本地中继：/p/<供应商id> 按供应商转发 + 鉴权注入 + 工具剥离 + token 计量
   relayLauncher.js  # 中继拉起器：健康检查 + detached 独立进程（主程序退出后仍存活）
@@ -62,7 +69,7 @@ test/               # node:test 单元 + 全链路测试
 ## 配置写入说明
 
 - **Codex（CLI / 桌面端）**：写入 `~/.codex/config.toml` 的 `model`、`model_provider = "custom"` 和 `[model_providers.custom]` 段。固定用 `custom` 这个 ID（与 cc-switch 一致），Codex 才会把不同供应商的会话放在同一个历史列表里。鉴权走 `~/.codex/auth.json` 的 `OPENAI_API_KEY`（写入前自动备份）；请求经本地中继 `127.0.0.1:4180/p/<供应商id>` 转发，中继注入真实 key、为千帆等严格网关剥离 `namespace` / `custom` / `web_search` 工具并计量用量。会保留文件里其它用户配置，只替换我们管理的键。
-- **Claude Code**：写入 `~/.claude/settings.json` 的 `env.ANTHROPIC_BASE_URL`（指向本地中继）/ `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL`。供应商必须是 Anthropic 协议，或在「编辑供应商」里填写 Anthropic 兼容地址（如阿里云百炼的 `https://dashscope.aliyuncs.com/apps/anthropic`）。
+- **Claude Code**：写入 `~/.claude/settings.json` 的 `env.ANTHROPIC_BASE_URL`（指向本地中继）/ `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL`，并写入 `ANTHROPIC_DEFAULT_HAIKU/SONNET/OPUS_MODEL` 三档模型路由。供应商必须是 Anthropic 协议，或在「编辑供应商」里填写 Anthropic 兼容地址（如阿里云百炼的 `https://dashscope.aliyuncs.com/apps/anthropic`）。
 - **Gemini CLI**：写入 `~/.gemini/settings.json` 的 `model` 与 `env.GEMINI_API_KEY`、`env.GOOGLE_GEMINI_BASE_URL`（指向本地中继），仅支持 Gemini 协议的供应商。
 - **OpenCode**：写入 `~/.config/opencode/opencode.json` 的 `provider` 与 `model`，按协议自动选 `@ai-sdk/openai-compatible` / `@ai-sdk/anthropic` / `@ai-sdk/google`，`options.baseURL` 指向本地中继，模型引用为 `provider_id/model_id`，并保留文件里已有的其它 provider。
 - **Hermes Agent**：写入 `config.yaml` 的 `model` 段与 `custom_providers` 列表（按供应商名 upsert，不重复追加），`base_url` 指向本地中继。路径解析顺序：`HERMES_HOME` 环境变量 → Windows 默认 `%LOCALAPPDATA%\hermes\config.yaml` / Mac、Linux 默认 `~/.hermes/config.yaml`。写入时保留 `mcp_servers`、`agent`、注释等其它内容。

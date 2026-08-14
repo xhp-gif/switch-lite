@@ -570,6 +570,28 @@ body {
   color: var(--alert-error-text);
 }
 
+.tag.speed.fast {
+  background: rgba(52, 211, 153, 0.15);
+  color: #2fbf9b;
+}
+
+.tag.speed.mid {
+  background: var(--tag-warn-bg);
+  color: var(--tag-warn-text);
+}
+
+.tag.speed.slow,
+.tag.speed.dead {
+  background: var(--alert-error-bg);
+  color: var(--alert-error-text);
+}
+
+.btn.small {
+  font-size: 12px;
+  padding: 3px 10px;
+  margin-left: auto;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

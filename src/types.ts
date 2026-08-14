@@ -50,6 +50,7 @@ export interface Provider {
   fetchedAt?: string;
   lastFetchError?: string;
   lastApplied?: { target: Target; at: string };
+  lastSpeedtest?: { at: string; ok: boolean; latencyMs: number; error?: string | null };
   createdAt: string;
   updatedAt: string;
 }
@@ -70,6 +71,7 @@ export interface ConfigStatusEntry {
 
 export interface Settings {
   active: Partial<Record<Target, string | null>>;
+  failover?: boolean;
 }
 
 export interface UsageEvent {
@@ -85,6 +87,10 @@ export interface UsageEvent {
   durationMs?: number;
   status?: number;
   ok?: boolean;
+  source?: 'session';
+  retried?: boolean;
+  failoverFrom?: string;
+  failoverTo?: string;
 }
 
 export interface UsageProviderStat {

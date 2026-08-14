@@ -10,7 +10,7 @@ interface Props {
   onPick: (modelId: string) => void;
 }
 
-export function ModelPicker({ models, preset, actionLabel, busy, onPick }: Props) {
+export function ModelPicker({ models, preset, busy, onPick }: Props) {
   const [tab, setTab] = useState<'rec' | 'all'>('rec');
   const [q, setQ] = useState('');
 
@@ -46,7 +46,7 @@ export function ModelPicker({ models, preset, actionLabel, busy, onPick }: Props
               </div>
               <div className="series-items">
                 {s.items.map((m) => (
-                  <PickRow key={m.id} id={m.id} actionLabel={actionLabel} busy={busy} onPick={onPick} />
+                  <PickRow key={m.id} id={m.id} busy={busy} onPick={onPick} />
                 ))}
               </div>
             </div>
@@ -58,7 +58,7 @@ export function ModelPicker({ models, preset, actionLabel, busy, onPick }: Props
         <div className="all-list">
           {!filteredAll.length && <div className="empty">没有匹配的模型</div>}
           {filteredAll.map((m) => (
-            <PickRow key={m.id} id={m.id} actionLabel={actionLabel} busy={busy} onPick={onPick} />
+            <PickRow key={m.id} id={m.id} busy={busy} onPick={onPick} />
           ))}
         </div>
       )}
@@ -68,12 +68,10 @@ export function ModelPicker({ models, preset, actionLabel, busy, onPick }: Props
 
 function PickRow({
   id,
-  actionLabel,
   busy,
   onPick,
 }: {
   id: string;
-  actionLabel: string;
   busy?: boolean;
   onPick: (id: string) => void;
 }) {

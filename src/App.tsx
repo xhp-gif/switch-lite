@@ -34,6 +34,8 @@ export default function App() {
   const [toast, setToast] = useState<ToastState>(null);
   const [editing, setEditing] = useState<Provider | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [speedtesting, setSpeedtesting] = useState<Record<string, boolean>>({});
+  const [speedtestingAll, setSpeedtestingAll] = useState(false);
 
   const notify = useCallback((kind: 'ok' | 'err', text: string) => {
     setToast({ kind, text });
@@ -135,6 +137,33 @@ export default function App() {
     }
   };
 
+  const handleSpeedtest = async (providerId: string) => {
+    setSpeedtesting((m) => ({ ...m, [providerId]: true }));
+    try {
+      const r = await api.speedtest(providerId);
+      await refreshProviders();
+      if (r.ok) notify('ok', `延迟 ${r.latencyMs}ms${r.warning ? `（${r.warning}）` : ''}`);
+      else notify('err', `测速失败：${r.error || '连接失败'}`);
+    } catch (e: unknown) {
+      notify('err', (e as Error).message);
+    } finally {
+      setSpeedtesting((m) => ({ ...m, [providerId]: false }));
+    }
+  };
+
+  const handleSpeedtestAll = async () => {
+    setSpeedtestingAll(true);
+    try {
+      await api.speedtestAll();
+      await refreshProviders();
+      notify('ok', '已全部测速完成');
+    } catch (e: unknown) {
+      notify('err', (e as Error).message);
+    } finally {
+      setSpeedtestingAll(false);
+    }
+  };
+
   const handleDelete = async (providerId: string) => {
     const p = providers.find((x) => x.id === providerId);
     if (!p) return;
@@ -199,6 +228,11 @@ export default function App() {
             <div className="card-head">
               <h3>已接入的供应商</h3>
               <span className="count">{connected.length} 个</span>
+              {connected.length > 0 && (
+                <button className="btn ghost small" disabled={speedtestingAll} onClick={handleSpeedtestAll} title="测试 API 端点响应速度（非模型推理速度）">
+                  {speedtestingAll ? '测速中…' : '全部测速'}
+                </button>
+              )}
             </div>
             {connected.length ? (
               <div className="provider-list">
@@ -209,7 +243,9 @@ export default function App() {
                     preset={presetOf(p)}
                     active={p.id === activeId}
                     busy={busy}
+                    speedtesting={!!speedtesting[p.id] || speedtestingAll}
                     onSetActive={handleSetActive}
+                    onSpeedtest={handleSpeedtest}
                     onEdit={setEditing}
                     onDelete={handleDelete}
                   />

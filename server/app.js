@@ -8,6 +8,8 @@ import { discoverModels, authFor } from './registry.js';
 import * as storage from './storage.js';
 import { applyConfig, configStatus } from './configWriter.js';
 import { summarizeUsage, clearUsage } from './usage.js';
+import { syncSessionLogs, resetSessionSync } from './sessionLogs.js';
+import { speedtestProvider } from './speedtest.js';
 import { getRelayAutostart, setRelayAutostart } from './autostart.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +33,22 @@ export function createApp() {
   // 启动时先合并历史遗留的重复供应商，避免列表混乱
   storage.mergeDuplicateProviders();
 
+  // 会话日志回填：启动时全量增量一次，之后每 60s 增量扫描。
+  // 双通道统计：中继计量为主，Agent 本地日志兜底（中继停机/接入前历史不留空洞）。
+  try {
+    syncSessionLogs();
+    const timer = setInterval(() => {
+      try {
+        syncSessionLogs();
+      } catch {
+        /* best-effort */
+      }
+    }, 60_000);
+    timer.unref?.();
+  } catch {
+    /* 日志解析失败不影响主服务 */
+  }
+
   app.get('/api/health', async (req, res) => {
     res.json({ ok: true, version: '0.1.0', ccSwitchRunning: await ccSwitchRunning() });
   });
@@ -41,6 +59,10 @@ export function createApp() {
 
   app.get('/api/settings', (req, res) => {
     res.json(storage.getSettings());
+  });
+
+  app.put('/api/settings', (req, res) => {
+    res.json(storage.updateSettings(req.body || {}));
   });
 
   app.put('/api/settings/active', (req, res) => {
@@ -107,6 +129,36 @@ export function createApp() {
     }
   });
 
+  // 测速：对模型列表端点做热身+计时 GET，结果存到 provider.lastSpeedtest
+  app.post('/api/providers/:id/speedtest', async (req, res) => {
+    const provider = storage.getProvider(req.params.id);
+    if (!provider) return res.status(404).json({ error: '供应商不存在' });
+    const result = await speedtestProvider(provider);
+    const updated = storage.updateProvider(provider.id, {
+      lastSpeedtest: { at: new Date().toISOString(), ok: result.ok, latencyMs: result.latencyMs, error: result.error || null },
+    });
+    res.json({ ...result, provider: updated });
+  });
+
+  // 一键测全部
+  app.post('/api/speedtest', async (req, res) => {
+    const providers = storage.listProviders();
+    const entries = await Promise.allSettled(
+      providers.map(async (p) => {
+        const result = await speedtestProvider(p);
+        storage.updateProvider(p.id, {
+          lastSpeedtest: { at: new Date().toISOString(), ok: result.ok, latencyMs: result.latencyMs, error: result.error || null },
+        });
+        return { id: p.id, ...result };
+      }),
+    );
+    const results = {};
+    for (const e of entries) {
+      if (e.status === 'fulfilled') results[e.value.id] = e.value;
+    }
+    res.json({ results, providers: storage.listProviders() });
+  });
+
   app.post('/api/config/apply', async (req, res) => {
     try {
       const { providerId, target, modelId } = req.body || {};
@@ -135,14 +187,20 @@ export function createApp() {
     res.json(configStatus());
   });
 
-  // 用量看板：days=7/30/0(全部)
+  // 用量看板：days=7/30/0(全部)；查询前机缘性做一次日志增量同步（不阻塞，失败静默）
   app.get('/api/usage/summary', (req, res) => {
+    try {
+      syncSessionLogs();
+    } catch {
+      /* best-effort */
+    }
     const days = Number(req.query.days ?? 7);
     res.json(summarizeUsage(Number.isFinite(days) && days >= 0 ? days : 7));
   });
 
   app.delete('/api/usage', (req, res) => {
     clearUsage();
+    resetSessionSync(); // 标记全部日志已读，避免清空后历史又被回填
     res.json({ ok: true });
   });
 
