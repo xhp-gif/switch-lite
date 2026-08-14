@@ -260,7 +260,6 @@ export default function App() {
                     busy={busy}
                     speedtesting={!!speedtesting[p.id] || speedtestingAll}
                     onSetActive={handleSetActive}
-                    onSwitchModel={handleSwitchModel}
                     onSpeedtest={handleSpeedtest}
                     onEdit={setEditing}
                     onDelete={handleDelete}

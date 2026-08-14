@@ -11,6 +11,8 @@ import { summarizeUsage, clearUsage, readUsage } from './usage.js';
 import { syncSessionLogs, resetSessionSync } from './sessionLogs.js';
 import { speedtestProvider } from './speedtest.js';
 import { getRelayAutostart, setRelayAutostart } from './autostart.js';
+import { relayHealth, ensureRelay, restartRelay } from './relayLauncher.js';
+import { RELAY_PORT, RELAY_ORIGIN } from './relay.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(__dirname, '..', 'dist');
@@ -50,7 +52,7 @@ export function createApp() {
   }
 
   app.get('/api/health', async (req, res) => {
-    res.json({ ok: true, version: '0.1.0', ccSwitchRunning: await ccSwitchRunning() });
+    res.json({ ok: true, version: '0.4.4', ccSwitchRunning: await ccSwitchRunning() });
   });
 
   app.get('/api/presets', (req, res) => {
@@ -224,6 +226,62 @@ export function createApp() {
       res.json(await setRelayAutostart(!!req.body?.enabled));
     } catch (err) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // 中继状态检测与控制
+  app.get('/api/relay/status', async (req, res) => {
+    const health = await relayHealth(800);
+    const autostart = await getRelayAutostart();
+    const running = Boolean(health && health.ok);
+    res.json({
+      ok: true,
+      running,
+      pid: health?.pid || null,
+      startedAt: health?.startedAt ? new Date(health.startedAt).toISOString() : null,
+      uptimeSec: health?.startedAt ? Math.max(0, Math.floor((Date.now() - health.startedAt) / 1000)) : 0,
+      port: RELAY_PORT,
+      origin: RELAY_ORIGIN,
+      autostart: autostart.supported ? autostart.enabled : false,
+      autostartSupported: autostart.supported,
+    });
+  });
+
+  app.post('/api/relay/restart', async (req, res) => {
+    try {
+      const result = await restartRelay();
+      const health = await relayHealth(1000);
+      const running = Boolean(health && health.ok);
+      res.json({
+        ok: running,
+        status: result.status,
+        pid: health?.pid || null,
+        startedAt: health?.startedAt ? new Date(health.startedAt).toISOString() : null,
+        uptimeSec: health?.startedAt ? Math.max(0, Math.floor((Date.now() - health.startedAt) / 1000)) : 0,
+        port: RELAY_PORT,
+        origin: RELAY_ORIGIN,
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/relay/start', async (req, res) => {
+    try {
+      const result = await ensureRelay();
+      const health = await relayHealth(1000);
+      const running = Boolean(health && health.ok);
+      res.json({
+        ok: running,
+        status: result.status,
+        pid: health?.pid || null,
+        startedAt: health?.startedAt ? new Date(health.startedAt).toISOString() : null,
+        uptimeSec: health?.startedAt ? Math.max(0, Math.floor((Date.now() - health.startedAt) / 1000)) : 0,
+        port: RELAY_PORT,
+        origin: RELAY_ORIGIN,
+      });
+    } catch (err) {
+      res.status(500).json({ ok: false, error: err.message });
     }
   });
 

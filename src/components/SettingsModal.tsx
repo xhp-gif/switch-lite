@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../api';
 import { APP_VERSION, agentName } from '../agents';
 import { getTheme, setTheme, type ThemeMode } from '../theme';
-import type { Target, UsageDayStat, UsageSummary } from '../types';
+import type { RelayStatus, Target, UsageDayStat, UsageSummary } from '../types';
 
 interface Props {
   onClose: () => void;
@@ -35,6 +35,15 @@ function fmtNum(n: number) {
 function fmtDur(ms: number) {
   if (!ms) return '—';
   return ms >= 1000 ? (ms / 1000).toFixed(2) + 's' : Math.round(ms) + 'ms';
+}
+
+function fmtUptime(sec: number) {
+  if (!sec || sec < 60) return `${sec || 0} 秒`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分钟`;
+  const hr = Math.floor(min / 60);
+  const remMin = min % 60;
+  return `${hr} 小时 ${remMin} 分钟`;
 }
 
 function fmtTime(ts: string) {
@@ -126,6 +135,10 @@ export function SettingsModal({ onClose, onError }: Props) {
   const [loading, setLoading] = useState(false);
   const [autostart, setAutostart] = useState<{ supported: boolean; enabled: boolean } | null>(null);
   const [failover, setFailover] = useState<boolean | null>(null);
+  const [relayStatus, setRelayStatus] = useState<RelayStatus | null>(null);
+  const [checkingRelay, setCheckingRelay] = useState(false);
+  const [restartingRelay, setRestartingRelay] = useState(false);
+  const [relayMessage, setRelayMessage] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<{ state: string; version?: string; percent?: number; message?: string } | null>(null);
   const desktop = typeof window !== 'undefined' ? window.switchliteDesktop : undefined;
 
@@ -134,13 +147,57 @@ export function SettingsModal({ onClose, onError }: Props) {
     return desktop.onUpdateStatus((s) => setUpdateStatus(s));
   }, [desktop]);
 
+  const checkRelay = useCallback(async () => {
+    setCheckingRelay(true);
+    setRelayMessage(null);
+    try {
+      const st = await api.getRelayStatus();
+      setRelayStatus(st);
+      if (st.running) {
+        setRelayMessage(`中继检测正常（端口: ${st.port}，PID: ${st.pid || '已连接'}）`);
+      } else {
+        setRelayMessage('中继服务未响应，请点击「重启中继」');
+      }
+    } catch (e: unknown) {
+      onError('检测中继失败: ' + (e as Error).message);
+    } finally {
+      setCheckingRelay(false);
+    }
+  }, [onError]);
+
+  const handleRestartRelay = useCallback(async () => {
+    setRestartingRelay(true);
+    setRelayMessage(null);
+    try {
+      const res = await api.restartRelay();
+      const st = await api.getRelayStatus();
+      setRelayStatus(st);
+      if (res.ok) {
+        setRelayMessage(`中继已成功重启并正常运行（PID: ${st.pid || res.pid || '—'}）`);
+      } else {
+        onError('中继重启后未响应，请查看 ~/.cc-switch-lite/relay.log 日志');
+      }
+    } catch (e: unknown) {
+      onError('重启中继失败: ' + (e as Error).message);
+    } finally {
+      setRestartingRelay(false);
+    }
+  }, [onError]);
+
   useEffect(() => {
     api.getRelayAutostart().then(setAutostart).catch(() => setAutostart(null));
     api
       .getSettings()
       .then((s) => setFailover(s.failover !== false))
       .catch(() => setFailover(null));
+    api.getRelayStatus().then(setRelayStatus).catch(() => setRelayStatus(null));
   }, []);
+
+  useEffect(() => {
+    if (section === 'appearance') {
+      api.getRelayStatus().then(setRelayStatus).catch(() => setRelayStatus(null));
+    }
+  }, [section]);
 
   const loadUsage = useCallback(
     async (d: number) => {
@@ -260,7 +317,60 @@ export function SettingsModal({ onClose, onError }: Props) {
                 </div>
 
                 <div className="settings-section">
-                  <h4>本地中继</h4>
+                  <div className="section-head-row">
+                    <h4>本地中继与服务检测</h4>
+                    <div className="section-actions">
+                      <button
+                        className="btn ghost small"
+                        disabled={checkingRelay || restartingRelay}
+                        onClick={checkRelay}
+                        title="主动向 127.0.0.1:4180 发起健康检测"
+                      >
+                        {checkingRelay ? '检测中…' : '重新检测'}
+                      </button>
+                      <button
+                        className="btn ghost small"
+                        disabled={checkingRelay || restartingRelay}
+                        onClick={handleRestartRelay}
+                        title="终止旧中继进程并以独立进程重新启动"
+                      >
+                        {restartingRelay ? '重启中…' : '重启中继'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className={`relay-status-card ${relayStatus ? (relayStatus.running ? 'running' : 'stopped') : ''}`}>
+                    <div className="relay-status-main">
+                      <div className="relay-status-indicator">
+                        <span className={`status-dot ${relayStatus?.running ? 'online' : 'offline'}`} />
+                        <span className="relay-status-title">
+                          {relayStatus ? (relayStatus.running ? '中继服务正常运行中' : '中继服务未连接或异常') : '正在检测中继状态…'}
+                        </span>
+                      </div>
+                      <div className="relay-status-details">
+                        <span>中继地址：<code>{relayStatus?.origin || 'http://127.0.0.1:4180'}</code></span>
+                        {relayStatus?.running && relayStatus.pid && (
+                          <span>进程 PID：<code>{relayStatus.pid}</code></span>
+                        )}
+                        {relayStatus?.running && relayStatus.uptimeSec > 0 && (
+                          <span>运行时长：<code>{fmtUptime(relayStatus.uptimeSec)}</code></span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {relayMessage && (
+                    <div className={`alert ${relayStatus?.running ? 'info' : 'error'}`}>
+                      {relayMessage}
+                    </div>
+                  )}
+
+                  {relayStatus && !relayStatus.running && !relayMessage && (
+                    <div className="alert error">
+                      ⚠️ 检测到本地中继（127.0.0.1:4180）未响应！Agent 可能无法正常发起请求。请点击右上角「重启中继」重新拉起服务。
+                    </div>
+                  )}
+
                   {autostart?.supported && (
                     <label className="autostart-row">
                       <input type="checkbox" checked={autostart.enabled} onChange={toggleAutostart} />

@@ -109,3 +109,36 @@ export async function ensureRelay() {
   }
   return { status: 'failed' };
 }
+
+export async function restartRelay() {
+  const alive = await relayHealth(400);
+  if (alive && alive.pid) {
+    try {
+      process.kill(alive.pid);
+    } catch {
+      /* 可能已退出 */
+    }
+    for (let i = 0; i < 20 && (await relayHealth(200)); i++) await sleep(100);
+  }
+  const logFd = openRelayLog();
+  const stdio = logFd === 'ignore' ? 'ignore' : ['ignore', logFd, logFd];
+  const isElectron = !!process.versions.electron;
+  const script = standalonePath();
+  const child = isElectron
+    ? spawn(process.execPath, [script], {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        detached: true,
+        stdio,
+      })
+    : spawn(process.execPath, [script], { detached: true, stdio });
+  child.unref();
+  if (logFd !== 'ignore') fs.closeSync(logFd);
+
+  for (let i = 0; i < 30; i++) {
+    await sleep(100);
+    const h = await relayHealth(200);
+    if (h && h.ok) return { status: 'spawned', pid: h.pid };
+  }
+  return { status: 'failed' };
+}
+

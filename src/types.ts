@@ -74,6 +74,18 @@ export interface Settings {
   failover?: boolean;
 }
 
+export interface RelayStatus {
+  ok: boolean;
+  running: boolean;
+  pid: number | null;
+  startedAt: string | null;
+  uptimeSec: number;
+  port: number;
+  origin: string;
+  autostart: boolean;
+  autostartSupported: boolean;
+}
+
 export interface HistoryEntry {
   model: string;
   providerId: string;

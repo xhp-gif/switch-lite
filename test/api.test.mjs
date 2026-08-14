@@ -244,7 +244,13 @@ test('API 全链路：供应商 CRUD -> 获取模型 -> 应用配置', async (t)
   assert.ok(hermesYaml2.includes('default: deepseek-reasoner'));
   assert.equal((hermesYaml2.match(/name: deepseek/g) || []).length, 1, '切换模型不应重复追加供应商');
 
-  // 7. 删除
+  // 7. 中继状态接口
+  const relayRes = await fetch(`${base}/api/relay/status`).then((r) => r.json());
+  assert.equal(relayRes.ok, true);
+  assert.equal(typeof relayRes.running, 'boolean');
+  assert.equal(relayRes.port, 4180);
+
+  // 8. 删除
   const del = await fetch(`${base}/api/providers/${created.id}`, { method: 'DELETE' });
   assert.equal(del.status, 200);
   const list = await fetch(`${base}/api/providers`).then((r) => r.json());

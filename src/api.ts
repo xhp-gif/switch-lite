@@ -1,4 +1,4 @@
-import type { ConfigStatusEntry, FetchResult, HistoryEntry, Preset, Provider, Settings, Target, UsageSummary } from './types';
+import type { ConfigStatusEntry, FetchResult, HistoryEntry, Preset, Provider, RelayStatus, Settings, Target, UsageSummary } from './types';
 
 interface ApiError extends Error {
   provider?: Provider;
@@ -47,6 +47,17 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
     }),
+  getRelayStatus: () => req<RelayStatus>('/api/relay/status'),
+  restartRelay: () =>
+    req<{ ok: boolean; status: string; pid: number | null; startedAt: string | null; uptimeSec: number; port: number; origin: string }>(
+      '/api/relay/restart',
+      { method: 'POST' },
+    ),
+  startRelay: () =>
+    req<{ ok: boolean; status: string; pid: number | null; startedAt: string | null; uptimeSec: number; port: number; origin: string }>(
+      '/api/relay/start',
+      { method: 'POST' },
+    ),
   getSettings: () => req<Settings>('/api/settings'),
   setActive: (target: Target, providerId: string | null) =>
     req<Settings>('/api/settings/active', {
