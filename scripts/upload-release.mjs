@@ -22,7 +22,7 @@ async function run() {
 
   const owner = 'xhp-gif';
   const repo = 'switch-lite';
-  const tag = 'v0.4.4';
+  const tag = 'v0.4.5';
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -37,13 +37,18 @@ async function run() {
     console.log(`[release] Creating GitHub Release for ${tag}...`);
     const body = {
       tag_name: tag,
-      name: 'SwitchLite v0.4.4',
-      body: `### SwitchLite v0.4.4 更新日志
+      name: 'SwitchLite v0.4.5',
+      body: `### SwitchLite v0.4.5 更新日志
 
-- **UI 风格回归 0.3.0 精简版**：恢复紧凑型双行供应商卡片，去除卡片内冗余堆叠的模型标签列表；
-- **供应商列表自适应滚动条**：为已接入供应商列表添加最大高度与窄滚动条，方便多厂商切换；
+- **内置 Anthropic ↔ OpenAI 双向流式转译引擎**：
+  - 彻底打通 VS Code Claude 插件 / Claude Code CLI 调用纯 OpenAI 格式模型（如百度千帆 \`glm-5.2\`、DeepSeek 官方、智谱、Moonshot 等）；
+  - 支持 SSE 实时打字机流式输出、Reasoning 思考链转译以及工具调用（Tool Use）；
+- **修复 Claude Code 模型可用性检测与白名单拦截**：
+  - 中继端新增 \`/models\` 路由模拟拦截，通过 Claude 客户端本地可用性探测；
+  - 优化 \`settings.json\` 配置写入逻辑，避免顶层字段与官方模型白名单冲突；
 - **设置中新增「本地中继与服务检测」模块**：实时展示中继运行状态与 PID，支持一键「重新检测」与「重启中继」；
-- **严格网关修复与全量 31 项测试通过**。`,
+- **UI 风格回归 0.3.0 精简版**：紧凑型双行供应商卡片与自适应滚动条；
+- **全量 34 项自动化单元与集成测试全部通过**。`,
       draft: false,
       prerelease: false,
     };
@@ -64,10 +69,10 @@ async function run() {
 
   const releaseDir = path.resolve('release');
   const filesToUpload = [
-    'SwitchLite Setup 0.4.4.exe',
-    'SwitchLite-Portable-0.4.4.exe',
+    'SwitchLite Setup 0.4.5.exe',
+    'SwitchLite-Portable-0.4.5.exe',
     'latest.yml',
-    'SwitchLite Setup 0.4.4.exe.blockmap',
+    'SwitchLite Setup 0.4.5.exe.blockmap',
   ];
 
   for (const file of filesToUpload) {
