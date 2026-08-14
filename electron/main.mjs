@@ -19,7 +19,7 @@ if (isRelayOnly) {
   app.whenReady().then(() => startRelay());
   // 无窗口也要保持进程存活
   app.on('window-all-closed', () => {});
-} else {
+} else if (!isSmokeTest) {
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
     app.quit();
