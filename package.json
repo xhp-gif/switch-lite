@@ -1,7 +1,7 @@
 {
   "name": "cc-switch-lite",
   "private": true,
-  "version": "0.4.1",
+  "version": "0.4.2",
   "type": "module",
   "description": "更简洁的 LLM 供应商切换器：根据 Base URL 自动发现模型，一键应用到 Claude Code / Codex CLI",
   "main": "electron/main.mjs",
@@ -48,9 +48,9 @@
       "signAndEditExecutable": false
     },
     "nsis": {
-      "oneClick": true,
+      "oneClick": false,
       "perMachine": false,
-      "allowToChangeInstallationDirectory": false,
+      "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "shortcutName": "SwitchLite"
     },
