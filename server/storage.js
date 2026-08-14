@@ -149,6 +149,45 @@ export function updateSettings(patch = {}) {
   return settings;
 }
 
+// ---------- 切换历史：按 (target, model) 去重，最新在前 ----------
+const HISTORY_CAP = 50;
+
+export function recordHistory(target, providerId, model) {
+  if (!target || !model) return;
+  const settings = getSettings();
+  const history = Array.isArray(settings.history) ? settings.history : [];
+  const next = history.filter((h) => !(h.target === target && h.model === model));
+  next.unshift({ target, providerId, model, at: new Date().toISOString() });
+  settings.history = next.slice(0, HISTORY_CAP);
+  saveSettings(settings);
+}
+
+// 合并「主动接入记录」与「中继实际调用记录」，按模型去重（同一模型只算一条历史）
+export function getHistory(target, usageEvents = []) {
+  const settings = getSettings();
+  const stored = (Array.isArray(settings.history) ? settings.history : []).filter((h) => h.target === target);
+  const providers = listProviders();
+  const byId = new Map(providers.map((p) => [p.id, p]));
+  const seen = new Set();
+  const out = [];
+  for (const h of stored) {
+    if (seen.has(h.model)) continue;
+    seen.add(h.model);
+    const p = byId.get(h.providerId);
+    out.push({ model: h.model, providerId: h.providerId, providerName: p ? p.name : '（已删除）', available: !!p, at: h.at });
+  }
+  // 用量事件按时间倒序补充（中继计量到的模型也是“用过”的历史）
+  const events = [...usageEvents].filter((e) => e.target === target && e.providerId && e.model).sort((a, b) => String(b.ts).localeCompare(String(a.ts)));
+  for (const e of events) {
+    if (seen.has(e.model)) continue;
+    seen.add(e.model);
+    const p = byId.get(e.providerId);
+    out.push({ model: e.model, providerId: e.providerId, providerName: p ? p.name : e.providerName, available: !!p, at: e.ts });
+    if (out.length >= HISTORY_CAP) break;
+  }
+  return out;
+}
+
 function saveSettings(settings) {
   ensureDir();
   const tmp = `${settingsFilePath()}.tmp`;

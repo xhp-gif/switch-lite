@@ -1,4 +1,4 @@
-import type { ConfigStatusEntry, FetchResult, Preset, Provider, Settings, Target, UsageSummary } from './types';
+import type { ConfigStatusEntry, FetchResult, HistoryEntry, Preset, Provider, Settings, Target, UsageSummary } from './types';
 
 interface ApiError extends Error {
   provider?: Provider;
@@ -60,4 +60,5 @@ export const api = {
     ),
   speedtestAll: () => req<{ providers: Provider[] }>('/api/speedtest', { method: 'POST' }),
   updateSettings: (body: Partial<Settings>) => req<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
+  history: (target: Target) => req<{ history: HistoryEntry[] }>(`/api/history?target=${target}`),
 };

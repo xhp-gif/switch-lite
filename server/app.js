@@ -7,7 +7,7 @@ import { VENDOR_PRESETS, getPreset } from './presets.js';
 import { discoverModels, authFor } from './registry.js';
 import * as storage from './storage.js';
 import { applyConfig, configStatus } from './configWriter.js';
-import { summarizeUsage, clearUsage } from './usage.js';
+import { summarizeUsage, clearUsage, readUsage } from './usage.js';
 import { syncSessionLogs, resetSessionSync } from './sessionLogs.js';
 import { speedtestProvider } from './speedtest.js';
 import { getRelayAutostart, setRelayAutostart } from './autostart.js';
@@ -171,6 +171,7 @@ export function createApp() {
         lastApplied: { target, at: new Date().toISOString() },
       });
       storage.setActiveProvider(target, providerId);
+      storage.recordHistory(target, providerId, mid);
       const ccRunning = await ccSwitchRunning();
       res.json({
         ...result,
@@ -181,6 +182,15 @@ export function createApp() {
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
+  });
+
+  // 切换历史：接入记录 + 中继实际调用记录，按模型去重
+  app.get('/api/history', (req, res) => {
+    const target = String(req.query.target || '');
+    if (!['claude', 'codex', 'gemini', 'opencode', 'hermes'].includes(target)) {
+      return res.status(400).json({ error: '未知 Agent' });
+    }
+    res.json({ history: storage.getHistory(target, readUsage()) });
   });
 
   app.get('/api/config/status', (req, res) => {

@@ -592,6 +592,76 @@ body {
   margin-left: auto;
 }
 
+/* 切换历史：可滚动列表，按模型去重 */
+.history-list {
+  max-height: 264px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb, rgba(120, 130, 160, 0.4)) transparent;
+}
+
+.history-list::-webkit-scrollbar {
+  width: 6px;
+}
+
+.history-list::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb, rgba(120, 130, 160, 0.4));
+  border-radius: 3px;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card-bg, transparent);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  color: inherit;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.history-row:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--hover-bg);
+}
+
+.history-row:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.history-row.current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.history-model {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-provider {
+  font-size: 12px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.history-go {
+  font-size: 12px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;

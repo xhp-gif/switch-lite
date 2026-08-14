@@ -74,6 +74,14 @@ export interface Settings {
   failover?: boolean;
 }
 
+export interface HistoryEntry {
+  model: string;
+  providerId: string;
+  providerName: string;
+  available: boolean;
+  at: string;
+}
+
 export interface UsageEvent {
   ts: string;
   providerId: string;
