@@ -202,8 +202,7 @@ function applyClaude(provider, modelId) {
   settings.env.ANTHROPIC_BASE_URL = relayProviderUrl(provider.id);
   settings.env.ANTHROPIC_AUTH_TOKEN = provider.apiKey || '';
   settings.env.ANTHROPIC_MODEL = modelId;
-  // 与真实 Claude Code 配置保持一致：顶层 model 会覆盖 env，需同步写入
-  settings.model = modelId;
+  delete settings.model; // 顶层 model 会触发 Claude Code 客户端对官方模型名的硬编码白名单校验，由 env.ANTHROPIC_* 接管
   // 模型路由：Claude Code 内部按 Opus/Sonnet/Haiku 三档发请求，
   // 第三方厂商没有这些模型名，需映射到该厂商实际模型；打杂任务（Haiku 档）
   // 优先指向 flash/lite 系小模型以省钱，单模型厂商三档同指主模型。

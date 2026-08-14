@@ -12,6 +12,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { getProvider, listProviders, getSettings } from './storage.js';
 import { appendUsage } from './usage.js';
+import {
+  anthropicToOpenAI,
+  openAIToAnthropicResponse,
+  createOpenAIToAnthropicStreamTransformer,
+} from './anthropicAdapter.js';
 
 export const RELAY_PORT = Number(process.env.CCS_RELAY_PORT || 4180);
 export const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
@@ -264,7 +269,7 @@ const BUFFER_LIMIT = 64 * 1024; // 错误响应缓冲上限，超过则只能原
  * - {committed:false, status, respText}：错误响应已缓冲，未发给客户端，可换备用重试
  * - {committed:false, networkError}：网络层失败，可换备用重试
  */
-function tryForward(req, res, { upstream, headers, body }) {
+function tryForward(req, res, { upstream, headers, body, adaptAnthropicToOpenAI, reqModel }) {
   return new Promise((resolve) => {
     const u = new URL(upstream);
     const transport = u.protocol === 'https:' ? https : http;
@@ -311,7 +316,54 @@ function tryForward(req, res, { upstream, headers, body }) {
           });
           return;
         }
-        // 非可转移状态：立即流式透传 + 计量 tap
+
+        // Anthropic ↔ OpenAI 协议转译
+        if (adaptAnthropicToOpenAI && status >= 200 && status < 300) {
+          const contentType = res2.headers['content-type'] || '';
+          const isStream = contentType.includes('text/event-stream');
+
+          if (isStream) {
+            res.writeHead(200, {
+              'content-type': 'text/event-stream',
+              'cache-control': 'no-cache',
+              connection: 'keep-alive',
+            });
+            const transformer = createOpenAIToAnthropicStreamTransformer(res, reqModel);
+            let captured = '';
+            res2.on('data', (c) => {
+              if (captured.length < 2 * 1024 * 1024) captured += c.toString('utf8');
+              transformer.write(c);
+            });
+            res2.on('end', () => {
+              transformer.end();
+              resolve({ committed: true, status, respText: captured });
+            });
+            res2.on('error', () => {
+              transformer.end();
+              resolve({ committed: true, status, respText: captured });
+            });
+            return;
+          }
+
+          // 非流式 JSON
+          let captured = '';
+          res2.on('data', (c) => {
+            if (captured.length < 2 * 1024 * 1024) captured += c.toString('utf8');
+          });
+          res2.on('end', () => {
+            const converted = openAIToAnthropicResponse(captured, reqModel);
+            res.writeHead(status, { 'content-type': 'application/json' });
+            res.end(converted);
+            resolve({ committed: true, status, respText: captured });
+          });
+          res2.on('error', () => {
+            res.end();
+            resolve({ committed: true, status, respText: captured });
+          });
+          return;
+        }
+
+        // 普通直通透传 + 计量 tap
         res.writeHead(status, res2.headers);
         res2.pipe(res);
         let captured = '';
@@ -364,11 +416,26 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
     res.end(JSON.stringify({ error: 'relay：供应商不存在或已删除，请在 SwitchLite 中重新接入' }));
     return;
   }
+  const pathOnly = restWithQuery.split('?')[0];
+  if (req.method === 'GET' && /(^|\/)models$/.test(pathOnly)) {
+    const customModels = (provider.models && provider.models.length ? provider.models : [{ id: provider.selectedModel || 'glm-5.2' }])
+      .map((m) => ({ type: 'model', id: m.id, display_name: m.id }));
+    const builtinModels = [
+      { type: 'model', id: 'claude-3-7-sonnet-20250219', display_name: 'Claude 3.7 Sonnet' },
+      { type: 'model', id: 'claude-3-5-sonnet-20241022', display_name: 'Claude 3.5 Sonnet' },
+      { type: 'model', id: 'claude-3-opus-20240229', display_name: 'Claude 3 Opus' },
+      { type: 'model', id: 'claude-3-5-haiku-20241022', display_name: 'Claude 3.5 Haiku' },
+      { type: 'model', id: 'glm-5.2', display_name: 'GLM-5.2' },
+    ];
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ data: [...customModels, ...builtinModels], has_more: false }));
+    return;
+  }
 
   readBody(req, async (body) => {
-    const pathOnly = restWithQuery.split('?')[0];
+    const isAnthropicReq = /(^|\/)messages$/.test(pathOnly);
     const protocol = provider.protocol || 'openai';
-    const reqModel = modelFromRequest(protocol, pathOnly, body);
+    const reqModel = modelFromRequest(isAnthropicReq ? 'anthropic' : protocol, pathOnly, body);
 
     // 组装尝试链：主供应商（若在熔断中且故障转移开启，直接越过）+ 备选
     let chain = [provider];
@@ -385,30 +452,49 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
       const p = chain[i];
       const isLast = i === chain.length - 1;
       const proto = p.protocol || 'openai';
-      let upstream = proto === 'anthropic' ? p.anthropicUrl || p.baseUrl : p.baseUrl;
+      let upstream = proto === 'anthropic' && p.anthropicUrl ? p.anthropicUrl : p.baseUrl;
+      const isNativeAnthropic = proto === 'anthropic' && (p.presetId === 'anthropic' || String(upstream).includes('anthropic.com') || Boolean(p.anthropicUrl));
+      const shouldAdapt = isAnthropicReq && !isNativeAnthropic;
+
       upstream = String(upstream).replace(/\/+$/, '');
       // Gemini SDK 会自带 /v1beta 版本路径，上游 base 里若已包含则去掉避免重复
       if (proto === 'gemini') upstream = upstream.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '');
 
       let outBody = body;
-      if (needsToolStrip(upstream, req.method, pathOnly)) {
+      let targetPath = restWithQuery;
+
+      if (shouldAdapt) {
+        outBody = anthropicToOpenAI(body, p.selectedModel || reqModel);
+        targetPath = 'chat/completions';
+      } else if (needsToolStrip(upstream, req.method, pathOnly)) {
         outBody = stripUnsupportedTools(body);
       }
+
       const headers = { ...req.headers };
       delete headers.authorization;
       delete headers['x-api-key'];
       delete headers['x-goog-api-key'];
+      if (shouldAdapt) {
+        delete headers['anthropic-version'];
+        delete headers['anthropic-beta'];
+      }
       if (p.apiKey) {
-        if (proto === 'anthropic') headers['x-api-key'] = p.apiKey;
+        if (proto === 'anthropic' && !shouldAdapt) headers['x-api-key'] = p.apiKey;
         else if (proto === 'gemini') headers['x-goog-api-key'] = p.apiKey;
         else headers.authorization = `Bearer ${p.apiKey}`;
       }
-      const target = `${upstream}/${restWithQuery}`;
+      const target = `${upstream}/${targetPath}`;
       headers.host = new URL(target).host;
       headers['content-length'] = Buffer.byteLength(outBody);
 
       const startedAt = Date.now();
-      const result = await tryForward(req, res, { upstream: target, headers, body: outBody });
+      const result = await tryForward(req, res, {
+        upstream: target,
+        headers,
+        body: outBody,
+        adaptAnthropicToOpenAI: shouldAdapt,
+        reqModel,
+      });
       const status = result.networkError ? 502 : result.status;
       lastResult = result;
       lastProvider = p;
@@ -418,12 +504,12 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
 
       // 计量：每次尝试都是真实调用，各记一条
       try {
-        const usage = extractUsage(proto, pathOnly, body, result.respText || '');
+        const usage = extractUsage(shouldAdapt ? 'openai' : proto, shouldAdapt ? 'chat/completions' : pathOnly, outBody, result.respText || '');
         appendUsage({
           providerId: p.id,
           providerName: p.name,
           target: p.target,
-          model: usage?.model || modelFromRequest(proto, pathOnly, body),
+          model: usage?.model || reqModel,
           input: usage?.input || 0,
           output: usage?.output || 0,
           total: usage?.total || 0,
@@ -485,6 +571,7 @@ function handleLegacyRoute(req, res) {
 export function startRelay() {
   const startedAt = Date.now();
   const server = http.createServer((req, res) => {
+    console.log(`[relay req] ${req.method} ${req.url}`);
     // 健康检查：供启动器判断中继是否存活、是否需要按代码新旧替换
     if (req.method === 'GET' && (req.url === '/__health' || req.url === '/__health/')) {
       res.writeHead(200, { 'content-type': 'application/json' });

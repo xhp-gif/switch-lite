@@ -116,7 +116,7 @@ test('API 全链路：供应商 CRUD -> 获取模型 -> 应用配置', async (t)
   const claudeSettings = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
   assert.equal(claudeSettings.env.ANTHROPIC_BASE_URL, `http://127.0.0.1:4180/p/${claude.id}`, 'Claude Code 应经本地中继访问上游（按供应商计量用量）');
   assert.equal(claudeSettings.env.ANTHROPIC_MODEL, 'claude-sonnet-4');
-  assert.equal(claudeSettings.model, 'claude-sonnet-4');
+  assert.equal(claudeSettings.model, undefined, '不应写顶层 model 字段以防拦截第三方模型名');
 
   // 6. OpenAI 兼容供应商无 anthropicUrl 时应用 Claude Code 应报错
   const badApply = await post('/api/config/apply', { providerId: created.id, target: 'claude', modelId });

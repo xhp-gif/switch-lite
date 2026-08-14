@@ -75,7 +75,13 @@ export async function ensureRelay() {
   const mtime = newestServerMtime();
 
   const alive = await relayHealth();
-  if (alive && alive.ok && (typeof alive.startedAt !== 'number' || alive.startedAt >= mtime)) {
+  const startedMs =
+    typeof alive?.startedAt === 'number'
+      ? alive.startedAt
+      : alive?.startedAt
+        ? new Date(alive.startedAt).getTime()
+        : 0;
+  if (alive && alive.ok && (!startedMs || startedMs >= mtime - 2000)) {
     return { status: 'running', pid: alive.pid };
   }
   // 运行中的中继比磁盘代码旧：先结束再重拉
@@ -96,9 +102,10 @@ export async function ensureRelay() {
       spawn(process.execPath, [script], {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         detached: true,
+        windowsHide: true,
         stdio,
       })
-    : spawn(process.execPath, [script], { detached: true, stdio });
+    : spawn(process.execPath, [script], { detached: true, windowsHide: true, stdio });
   child.unref();
   if (logFd !== 'ignore') fs.closeSync(logFd);
 
@@ -128,9 +135,10 @@ export async function restartRelay() {
     ? spawn(process.execPath, [script], {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         detached: true,
+        windowsHide: true,
         stdio,
       })
-    : spawn(process.execPath, [script], { detached: true, stdio });
+    : spawn(process.execPath, [script], { detached: true, windowsHide: true, stdio });
   child.unref();
   if (logFd !== 'ignore') fs.closeSync(logFd);
 
