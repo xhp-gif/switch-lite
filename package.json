@@ -1,7 +1,7 @@
 {
   "name": "cc-switch-lite",
   "private": true,
-  "version": "0.4.4",
+  "version": "0.4.5",
   "type": "module",
   "description": "更简洁的 LLM 供应商切换器：根据 Base URL 自动发现模型，一键应用到 Claude Code / Codex CLI",
   "main": "electron/main.mjs",
@@ -13,7 +13,7 @@
     "build": "vite build",
     "start": "node server/index.js",
     "test": "node --test",
-    "dist": "electron-builder --win nsis && electron-builder --win portable",
+    "dist": "electron-builder --win nsis && node scripts/clean-7z.mjs && electron-builder --win -c.win.target=portable",
     "dist:dir": "electron-builder --win --dir"
   },
   "build": {
@@ -41,10 +41,7 @@
       "output": "release"
     },
     "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
+      "target": "nsis",
       "icon": "build/icon.ico",
       "signAndEditExecutable": false
     },

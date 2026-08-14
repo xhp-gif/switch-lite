@@ -52,7 +52,7 @@ export function createApp() {
   }
 
   app.get('/api/health', async (req, res) => {
-    res.json({ ok: true, version: '0.4.4', ccSwitchRunning: await ccSwitchRunning() });
+    res.json({ ok: true, version: '0.4.5', ccSwitchRunning: await ccSwitchRunning() });
   });
 
   app.get('/api/presets', (req, res) => {
