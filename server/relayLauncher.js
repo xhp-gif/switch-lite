@@ -4,6 +4,7 @@
 // - 没有中继 → 以 detached 方式拉起独立进程（主程序退出后中继仍存活）
 import fs from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +57,19 @@ function newestServerMtime() {
   }
 }
 
+// 中继 stdout/stderr 落盘：spawn 崩溃（如模块解析失败）时可在日志里看到原因
+function openRelayLog() {
+  try {
+    const home = process.env.CCS_LITE_HOME || path.join(os.homedir(), '.cc-switch-lite');
+    fs.mkdirSync(home, { recursive: true });
+    const fd = fs.openSync(path.join(home, 'relay.log'), 'a');
+    fs.writeFileSync(fd, `\n--- relay spawn ${new Date().toISOString()} ---\n`);
+    return fd;
+  } catch {
+    return 'ignore';
+  }
+}
+
 export async function ensureRelay() {
   const script = standalonePath();
   const mtime = newestServerMtime();
@@ -74,16 +88,19 @@ export async function ensureRelay() {
     for (let i = 0; i < 20 && (await relayHealth(200)); i++) await sleep(100);
   }
 
+  const logFd = openRelayLog();
+  const stdio = logFd === 'ignore' ? 'ignore' : ['ignore', logFd, logFd];
   const isElectron = !!process.versions.electron;
   const child = isElectron
     ? // Electron 没有独立 Node，用自身以纯 Node 模式跑脚本
       spawn(process.execPath, [script], {
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
         detached: true,
-        stdio: 'ignore',
+        stdio,
       })
-    : spawn(process.execPath, [script], { detached: true, stdio: 'ignore' });
+    : spawn(process.execPath, [script], { detached: true, stdio });
   child.unref();
+  if (logFd !== 'ignore') fs.closeSync(logFd);
 
   for (let i = 0; i < 30; i++) {
     await sleep(100);
