@@ -410,7 +410,14 @@ export function failoverChain(primaryId, model, allProviders, now = Date.now()) 
 
 // 通用路由：/p/<providerId>/<rest...>
 function handleProviderRoute(req, res, providerId, restWithQuery) {
-  const provider = getProvider(providerId);
+  let provider = getProvider(providerId);
+  if (!provider || !provider.baseUrl) {
+    // 容错兜底：若客户端保留了旧的 Provider ID，自动无缝回退到当前活跃的供应商
+    const settings = getSettings();
+    const activeClaude = settings.active?.claude ? getProvider(settings.active.claude) : null;
+    const anyClaude = listProviders().find((p) => p.target === 'claude');
+    provider = activeClaude || anyClaude || listProviders()[0] || null;
+  }
   if (!provider || !provider.baseUrl) {
     res.writeHead(502, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'relay：供应商不存在或已删除，请在 SwitchLite 中重新接入' }));
