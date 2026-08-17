@@ -4,7 +4,7 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { VENDOR_PRESETS, getPreset } from './presets.js';
-import { discoverModels, authFor } from './registry.js';
+import { discoverModels, authFor, inferProviderHint } from './registry.js';
 import * as storage from './storage.js';
 import { applyConfig, configStatus } from './configWriter.js';
 import { summarizeUsage, clearUsage, readUsage } from './usage.js';
@@ -52,7 +52,7 @@ export function createApp() {
   }
 
   app.get('/api/health', async (req, res) => {
-    res.json({ ok: true, version: '0.4.5', ccSwitchRunning: await ccSwitchRunning() });
+    res.json({ ok: true, version: '0.4.6', ccSwitchRunning: await ccSwitchRunning() });
   });
 
   app.get('/api/presets', (req, res) => {
@@ -99,6 +99,12 @@ export function createApp() {
     res.json({ ok: true });
   });
 
+  // 智能推导供应商预设与协议
+  app.post('/api/infer', (req, res) => {
+    const { url = '', apiKey = '' } = req.body || {};
+    res.json(inferProviderHint({ url, apiKey }) || {});
+  });
+
   // 直接按 URL 试抓模型（未保存的供应商也可用）
   app.post('/api/fetch-models', async (req, res) => {
     try {
@@ -106,7 +112,7 @@ export function createApp() {
       const result = await discoverModels({ baseUrl, apiKey, protocol });
       res.json({ ...result, count: result.models.length });
     } catch (err) {
-      res.status(400).json({ error: err.message, attempts: err.attempts || null });
+      res.status(400).json({ error: err.message, attempts: err.attempts || null, manualFallback: err.manualFallback || false });
     }
   });
 
@@ -120,6 +126,7 @@ export function createApp() {
         protocol: provider.protocol,
       });
       const updated = storage.updateProvider(provider.id, {
+        baseUrl: result.resolvedBaseUrl || provider.baseUrl,
         models: result.models,
         fetchedAt: new Date().toISOString(),
         lastFetchError: null,
@@ -127,7 +134,7 @@ export function createApp() {
       res.json({ provider: updated, ...result, count: result.models.length });
     } catch (err) {
       const updated = storage.updateProvider(provider.id, { lastFetchError: err.message });
-      res.status(400).json({ error: err.message, attempts: err.attempts || null, provider: updated });
+      res.status(400).json({ error: err.message, attempts: err.attempts || null, provider: updated, manualFallback: err.manualFallback || false });
     }
   });
 

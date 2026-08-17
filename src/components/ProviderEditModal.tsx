@@ -1,23 +1,27 @@
 import { useEffect, useState } from 'react';
-import type { Protocol, Provider } from '../types';
+import type { Preset, Protocol, Provider } from '../types';
+import { ModelPicker } from './ModelPicker';
 
 interface Props {
   provider: Provider;
+  preset: Preset | null;
   busy: boolean;
   onSave: (patch: Partial<Provider>) => Promise<void>;
   onFetch: () => Promise<void>;
   onClose: () => void;
 }
 
-export function ProviderEditModal({ provider, busy, onSave, onFetch, onClose }: Props) {
+export function ProviderEditModal({ provider, preset, busy, onSave, onFetch, onClose }: Props) {
   const [name, setName] = useState(provider.name);
   const [baseUrl, setBaseUrl] = useState(provider.baseUrl);
   const [anthropicUrl, setAnthropicUrl] = useState(provider.anthropicUrl || '');
   const [apiKey, setApiKey] = useState(provider.apiKey);
   const [protocol, setProtocol] = useState<Protocol>(provider.protocol);
   const [wireApi, setWireApi] = useState(provider.wireApi);
+  const [selectedModel, setSelectedModel] = useState(provider.selectedModel || '');
   const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [fetching, setFetching] = useState(false);
 
   useEffect(() => {
     setName(provider.name);
@@ -26,23 +30,39 @@ export function ProviderEditModal({ provider, busy, onSave, onFetch, onClose }: 
     setApiKey(provider.apiKey);
     setProtocol(provider.protocol);
     setWireApi(provider.wireApi);
-  }, [provider.id]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (provider.selectedModel) {
+      setSelectedModel(provider.selectedModel);
+    } else if (provider.models && provider.models.length > 0) {
+      setSelectedModel(provider.models[0].id);
+    }
+  }, [provider.id, provider.updatedAt, provider.fetchedAt]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const patch = { name, baseUrl, anthropicUrl, apiKey, protocol, wireApi };
+  const patch = { name, baseUrl, anthropicUrl, apiKey, protocol, wireApi, selectedModel };
 
-  const run = async (fn: () => Promise<void>) => {
+  const handleSaveOnly = async () => {
     setSaving(true);
     try {
-      await fn();
+      await onSave(patch);
+      onClose();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveAndFetch = async () => {
+    setFetching(true);
+    try {
+      await onSave(patch);
+      await onFetch();
+    } finally {
+      setFetching(false);
     }
   };
 
   return (
     // 只能用右上角 × 关闭：误点空白处不应丢失正在编辑的内容
     <div className="modal-mask">
-      <div className="modal">
+      <div className="modal" style={{ width: '720px' }}>
         <div className="modal-head">
           <h3>编辑供应商</h3>
           <button className="icon-btn" onClick={onClose} aria-label="关闭">
@@ -98,25 +118,83 @@ export function ProviderEditModal({ provider, busy, onSave, onFetch, onClose }: 
         </div>
 
         {provider.lastFetchError && (
-          <div className="alert error">
+          <div className="alert error" style={{ marginTop: '12px' }}>
             <strong>上次获取失败：</strong>
             {provider.lastFetchError}
           </div>
         )}
 
-        <div className="modal-foot">
-          <button className="btn" disabled={busy || saving} onClick={() => run(() => onSave(patch))}>
-            保存
+        {/* 模型列表选择区域 */}
+        {provider.models && provider.models.length > 0 ? (
+          <div className="edit-models-section" style={{ marginTop: '16px', borderTop: '1px dashed var(--line)', paddingTop: '14px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <strong style={{ fontSize: '13.5px' }}>选择模型</strong>
+                <span className="hint">
+                  {selectedModel ? (
+                    <>
+                      已选模型：<code style={{ color: 'var(--accent)', fontWeight: 650 }}>{selectedModel}</code>
+                    </>
+                  ) : (
+                    <span style={{ color: 'var(--warn)' }}>未选择模型</span>
+                  )}
+                </span>
+              </div>
+              <span className="hint">共 {provider.models.length} 个可用模型</span>
+            </div>
+
+            <div className="picker-wrap" style={{ maxHeight: '260px', overflowY: 'auto', border: '1px solid var(--line)', borderRadius: '12px', padding: '6px' }}>
+              <ModelPicker
+                models={provider.models}
+                preset={preset}
+                selectedId={selectedModel}
+                actionLabel="选择"
+                busy={busy || saving || fetching}
+                onPick={(modelId) => {
+                  setSelectedModel(modelId);
+                }}
+              />
+            </div>
+          </div>
+        ) : (
+          <div className="hint" style={{ marginTop: '14px', textAlign: 'center', padding: '12px', background: 'var(--panel-soft)', borderRadius: '10px' }}>
+            💡 点击下方「保存并重新获取模型」可自动拉取并展示该供应商的全部可用模型
+          </div>
+        )}
+
+        {/* 手动指定/修改当前模型 */}
+        <div style={{ marginTop: '14px', padding: '10px 12px', background: 'var(--panel-soft)', borderRadius: '10px', border: '1px dashed var(--line)' }}>
+          <label className="field" style={{ margin: 0 }}>
+            <span style={{ fontSize: '12px', fontWeight: 600 }}>手动输入 / 覆盖当前选中的模型 ID</span>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '4px' }}>
+              <input
+                style={{ flex: 1 }}
+                placeholder="直接输入模型名称，如 deepseek-v3 / glm-5.2 / kimi-k2.5"
+                value={selectedModel}
+                onChange={(e) => setSelectedModel(e.target.value)}
+                spellCheck={false}
+              />
+            </div>
+          </label>
+        </div>
+
+        <div className="modal-foot" style={{ marginTop: '20px' }}>
+          <button className="btn" disabled={busy || saving || fetching} onClick={handleSaveOnly}>
+            {saving ? '保存中…' : '保存'}
           </button>
           <button
             className="btn primary"
-            disabled={busy || saving || !baseUrl.trim()}
-            onClick={() => run(async () => {
-              await onSave(patch);
-              await onFetch();
-            })}
+            disabled={busy || saving || fetching || !baseUrl.trim()}
+            onClick={handleSaveAndFetch}
           >
-            保存并重新获取模型
+            {fetching ? (
+              <>
+                <span className="spinner" />
+                正在获取模型…
+              </>
+            ) : (
+              '保存并重新获取模型'
+            )}
           </button>
         </div>
       </div>

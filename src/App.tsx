@@ -283,7 +283,14 @@ export default function App() {
       </div>
 
       {editing && (
-        <ProviderEditModal provider={editing} busy={busy} onSave={handleEditSave} onFetch={handleEditFetch} onClose={() => setEditing(null)} />
+        <ProviderEditModal
+          provider={editing}
+          preset={presetOf(editing)}
+          busy={busy}
+          onSave={handleEditSave}
+          onFetch={handleEditFetch}
+          onClose={() => setEditing(null)}
+        />
       )}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} onError={(t) => notify('err', t)} />}
       <Toast toast={toast} />

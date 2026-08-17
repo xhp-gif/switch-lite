@@ -42,7 +42,7 @@ test('切换失败回滚：任一文件写失败，全部已改文件自动还�
   assert.ok(!fs.existsSync(path.join(tmpLite, 'relay.json')), '新建 relay.json 应被清理');
 });
 
-test('Claude 模型路由：多模型厂商 Haiku 档指向 flash 系，单模型厂商三档同值', () => {
+test('Claude 模型路由：三档均统一指向主模型，保证 Auto 模式与打杂任务稳定可用', () => {
   const claudeFile = path.join(tmpHome, '.claude', 'settings.json');
 
   const multi = {
@@ -58,7 +58,7 @@ test('Claude 模型路由：多模型厂商 Haiku 档指向 flash 系，单模�
   const s1 = JSON.parse(fs.readFileSync(claudeFile, 'utf8'));
   assert.equal(s1.env.ANTHROPIC_DEFAULT_SONNET_MODEL, 'deepseek-v4-pro');
   assert.equal(s1.env.ANTHROPIC_DEFAULT_OPUS_MODEL, 'deepseek-v4-pro');
-  assert.equal(s1.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'deepseek-v4-flash', '打杂任务应路由到小模型');
+  assert.equal(s1.env.ANTHROPIC_DEFAULT_HAIKU_MODEL, 'deepseek-v4-pro', 'Haiku 档应指向主选模型以防冷门模型无权限报错');
 
   const single = {
     id: 'cl-single',

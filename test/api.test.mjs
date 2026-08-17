@@ -118,10 +118,11 @@ test('API 全链路：供应商 CRUD -> 获取模型 -> 应用配置', async (t)
   assert.equal(claudeSettings.env.ANTHROPIC_MODEL, 'claude-sonnet-4');
   assert.equal(claudeSettings.model, undefined, '不应写顶层 model 字段以防拦截第三方模型名');
 
-  // 6. OpenAI 兼容供应商无 anthropicUrl 时应用 Claude Code 应报错
-  const badApply = await post('/api/config/apply', { providerId: created.id, target: 'claude', modelId });
-  assert.equal(badApply.status, 400);
-  assert.match((await badApply.json()).error, /Anthropic/);
+  // 6. OpenAI 兼容供应商应用到 Claude Code（经中继自动转译协议）
+  const openAIForClaude = await post('/api/config/apply', { providerId: created.id, target: 'claude', modelId });
+  assert.equal(openAIForClaude.status, 200);
+  const openAIClaudeSettings = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
+  assert.equal(openAIClaudeSettings.env.ANTHROPIC_BASE_URL, `http://127.0.0.1:4180/p/${created.id}`);
 
   // 6.5 Gemini CLI：仅 Gemini 协议可写入
   const geminiRes = await post('/api/providers', {

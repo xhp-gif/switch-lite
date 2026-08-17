@@ -5,12 +5,13 @@ import type { ModelInfo, Preset } from '../types';
 interface Props {
   models: ModelInfo[];
   preset: Preset | null;
-  actionLabel: string;
+  selectedId?: string;
+  actionLabel?: string;
   busy?: boolean;
   onPick: (modelId: string) => void;
 }
 
-export function ModelPicker({ models, preset, busy, onPick }: Props) {
+export function ModelPicker({ models, preset, selectedId, actionLabel, busy, onPick }: Props) {
   const [tab, setTab] = useState<'rec' | 'all'>('rec');
   const [q, setQ] = useState('');
 
@@ -46,7 +47,14 @@ export function ModelPicker({ models, preset, busy, onPick }: Props) {
               </div>
               <div className="series-items">
                 {s.items.map((m) => (
-                  <PickRow key={m.id} id={m.id} busy={busy} onPick={onPick} />
+                  <PickRow
+                    key={m.id}
+                    id={m.id}
+                    selected={m.id === selectedId}
+                    actionLabel={actionLabel}
+                    busy={busy}
+                    onPick={onPick}
+                  />
                 ))}
               </div>
             </div>
@@ -58,7 +66,14 @@ export function ModelPicker({ models, preset, busy, onPick }: Props) {
         <div className="all-list">
           {!filteredAll.length && <div className="empty">没有匹配的模型</div>}
           {filteredAll.map((m) => (
-            <PickRow key={m.id} id={m.id} busy={busy} onPick={onPick} />
+            <PickRow
+              key={m.id}
+              id={m.id}
+              selected={m.id === selectedId}
+              actionLabel={actionLabel}
+              busy={busy}
+              onPick={onPick}
+            />
           ))}
         </div>
       )}
@@ -68,19 +83,38 @@ export function ModelPicker({ models, preset, busy, onPick }: Props) {
 
 function PickRow({
   id,
+  selected,
+  actionLabel,
   busy,
   onPick,
 }: {
   id: string;
+  selected?: boolean;
+  actionLabel?: string;
   busy?: boolean;
   onPick: (id: string) => void;
 }) {
   return (
-    <div className="model-row" onClick={() => onPick(id)}>
-      <span className="model-id">{id}</span>
+    <div className={`model-row ${selected ? 'selected' : ''}`} onClick={() => onPick(id)}>
+      <span className="model-id">
+        {id}
+        {selected && (
+          <span className="tag accent" style={{ marginLeft: 8, fontSize: '11px', padding: '1px 6px' }}>
+            已选
+          </span>
+        )}
+      </span>
       <span className="model-actions">
-        <button className="mini primary" disabled={busy} onClick={() => onPick(id)}>
-          接入
+        <button
+          type="button"
+          className={`mini ${selected ? 'accent' : 'primary'}`}
+          disabled={busy}
+          onClick={(e) => {
+            e.stopPropagation();
+            onPick(id);
+          }}
+        >
+          {selected ? '已选择' : (actionLabel || '接入')}
         </button>
       </span>
     </div>

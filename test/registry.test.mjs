@@ -6,12 +6,14 @@ import {
   parseModels,
   buildRecommendations,
   discoverModels,
+  inferProviderHint,
+  resolveBaseFromEndpoint,
 } from '../server/registry.js';
 import { getPreset } from '../server/presets.js';
 import { startMockServer } from './mock-model-server.mjs';
 
-test('normalizeBaseUrl：兼容各种粘贴形式', () => {
-  assert.equal(normalizeBaseUrl('https://api.deepseek.com'), 'https://api.deepseek.com');
+test('normalizeBaseUrl：兼容各种粘贴形式与自动补全 https', () => {
+  assert.equal(normalizeBaseUrl('api.deepseek.com'), 'https://api.deepseek.com');
   assert.equal(normalizeBaseUrl('https://api.deepseek.com/'), 'https://api.deepseek.com');
   assert.equal(normalizeBaseUrl('https://api.deepseek.com/v1/'), 'https://api.deepseek.com/v1');
   assert.equal(normalizeBaseUrl('https://example.com/v1/chat/completions'), 'https://example.com/v1');
@@ -20,13 +22,26 @@ test('normalizeBaseUrl：兼容各种粘贴形式', () => {
   assert.equal(normalizeBaseUrl(''), '');
 });
 
+test('inferProviderHint：API Key 与域名指纹智能识别', () => {
+  const baiduKey = inferProviderHint({ apiKey: 'bce-v3/ALTAK-test/123' });
+  assert.equal(baiduKey.presetId, 'baidu');
+  assert.equal(baiduKey.baseUrl, 'https://qianfan.baidubce.com/v2');
+
+  const antKey = inferProviderHint({ apiKey: 'sk-ant-api03-test' });
+  assert.equal(antKey.protocol, 'anthropic');
+
+  const aliyunUrl = inferProviderHint({ url: 'https://dashscope.aliyuncs.com' });
+  assert.equal(aliyunUrl.presetId, 'aliyun');
+  assert.equal(aliyunUrl.baseUrl, 'https://dashscope.aliyuncs.com/compatible-mode/v1');
+});
+
 test('buildModelCandidates：OpenAI 兼容 / Anthropic / Ollama / DashScope', () => {
-  assert.deepEqual(buildModelCandidates('https://api.deepseek.com', 'openai'), [
-    'https://api.deepseek.com/models',
-    'https://api.deepseek.com/v1/models',
-    'https://api.deepseek.com/api/v1/models',
-    'https://api.deepseek.com/api/models',
-  ]);
+  const ds = buildModelCandidates('https://api.deepseek.com', 'openai');
+  assert.ok(ds.includes('https://api.deepseek.com/models'));
+  assert.ok(ds.includes('https://api.deepseek.com/v1/models'));
+  assert.ok(ds.includes('https://api.deepseek.com/api/v1/models'));
+  assert.ok(ds.includes('https://api.deepseek.com/v2/models'));
+
   assert.deepEqual(buildModelCandidates('https://api.anthropic.com/v1', 'anthropic'), [
     'https://api.anthropic.com/v1/models',
   ]);

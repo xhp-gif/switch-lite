@@ -190,28 +190,21 @@ export function patchCodexToml(existing, block) {
 }
 
 function applyClaude(provider, modelId) {
-  if (provider.protocol !== 'anthropic' && !provider.anthropicUrl) {
-    throw new Error(
-      '该供应商不是 Anthropic 协议。Claude Code 需要 Anthropic 兼容地址（例如阿里云百炼的 /apps/anthropic），请先在「Anthropic 兼容地址」中填写。',
-    );
-  }
   const settings = readJson(targets().claude.file);
   settings.env = settings.env || {};
-  // 经本地中继转发（按供应商注入 x-api-key 并计量用量）；AUTH_TOKEN 仍需写入，
-  // Claude Code 要求它非空才会发请求，中继会用真实 key 覆盖它。
+  // 经本地中继转发（按供应商注入 key 并计量用量，若为非 Anthropic 协议则由本地中继自动进行 Anthropic ↔ OpenAI 协议转译）；
+  // AUTH_TOKEN 仍需写入，Claude Code 要求它非空才会发请求，中继会用真实 key 覆盖它。
   settings.env.ANTHROPIC_BASE_URL = relayProviderUrl(provider.id);
-  settings.env.ANTHROPIC_AUTH_TOKEN = provider.apiKey || '';
+  settings.env.ANTHROPIC_AUTH_TOKEN = provider.apiKey || 'sk-switch-lite';
   settings.env.ANTHROPIC_MODEL = modelId;
   delete settings.model; // 顶层 model 会触发 Claude Code 客户端对官方模型名的硬编码白名单校验，由 env.ANTHROPIC_* 接管
   // 模型路由：Claude Code 内部按 Opus/Sonnet/Haiku 三档发请求，
-  // 第三方厂商没有这些模型名，需映射到该厂商实际模型；打杂任务（Haiku 档）
-  // 优先指向 flash/lite 系小模型以省钱，单模型厂商三档同指主模型。
-  const small = (Array.isArray(provider.models) ? provider.models : []).find((m) =>
-    /flash|lite|mini|haiku|air|small|turbo/i.test(String(m && m.id)),
-  );
+  // 第三方厂商没有这些模型名，需映射到该厂商实际模型。
+  // 为确保稳定性，默认所有档位（Sonnet / Opus / Haiku）均统一指向用户选择的主模型 modelId，
+  // 避免自动猜测未授权或不存在的冷门小模型导致 Auto 模式或后台打杂任务报错。
   settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = modelId;
   settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = modelId;
-  settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = small ? small.id : modelId;
+  settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = modelId;
   delete settings.env.ANTHROPIC_SMALL_FAST_MODEL; // 旧键归一化为 DEFAULT_*
   fs.writeFileSync(targets().claude.file, JSON.stringify(settings, null, 2) + '\n', 'utf8');
 }
