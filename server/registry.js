@@ -88,7 +88,33 @@ export function normalizeBaseUrl(input) {
   url = url.replace(/\/embeddings$/i, '');
   // 去掉结尾 /models，保留 /v1，我们会按需重新拼接
   url = url.replace(/\/models$/i, '');
-  return stripTrailingSlash(url);
+  url = stripTrailingSlash(url);
+
+  // 厂商特定版本路径智能纠偏（例如千帆必须走 /v2，不能带 /v1）
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes('qianfan.baidubce.com')) {
+      if (!/\/v2$/i.test(u.pathname)) {
+        url = `${u.origin}/v2`;
+      }
+    } else if (u.hostname.includes('dashscope.aliyuncs.com')) {
+      if (!/\/compatible-mode\/v1$/i.test(u.pathname) && !/\/apps\/anthropic$/i.test(u.pathname)) {
+        url = `${u.origin}/compatible-mode/v1`;
+      }
+    } else if (u.hostname.includes('open.bigmodel.cn')) {
+      if (!/\/api\/paas\/v4$/i.test(u.pathname)) {
+        url = `${u.origin}/api/paas/v4`;
+      }
+    } else if (u.hostname.includes('volces.com')) {
+      if (!/\/api\/v3$/i.test(u.pathname)) {
+        url = `${u.origin}/api/v3`;
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return url;
 }
 
 export function buildModelCandidates(baseUrl, protocol) {

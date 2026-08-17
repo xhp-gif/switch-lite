@@ -459,8 +459,9 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
       upstream = String(upstream).replace(/\/+$/, '');
       // Gemini SDK 会自带 /v1beta 版本路径，上游 base 里若已包含则去掉避免重复
       if (proto === 'gemini') upstream = upstream.replace(/\/v1beta$/i, '').replace(/\/v1$/i, '');
-      if (String(upstream).includes('qianfan.baidubce.com') && !/\/v2$/i.test(upstream)) {
-        upstream = `${upstream}/v2`;
+      if (String(upstream).includes('qianfan.baidubce.com')) {
+        upstream = String(upstream).replace(/\/v1$/i, '').replace(/\/+$/, '');
+        if (!/\/v2$/i.test(upstream)) upstream = `${upstream}/v2`;
       }
 
       let outBody = body;
