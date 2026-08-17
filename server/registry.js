@@ -125,6 +125,16 @@ export function buildModelCandidates(baseUrl, protocol) {
     if (u && !candidates.includes(u)) candidates.push(u);
   };
 
+  try {
+    const u = new URL(base);
+    if (u.hostname.includes('qianfan.baidubce.com')) {
+      add(`${u.origin}/v2/models`);
+      return candidates;
+    }
+  } catch {
+    /* ignore */
+  }
+
   if (protocol === 'anthropic') {
     add(`${base}/models`);
     if (!/\/v1$/i.test(base)) add(`${base}/v1/models`);
@@ -190,16 +200,36 @@ export function parseModels(payload, protocol) {
   return out;
 }
 
-export function authFor(protocol) {
+export function authFor(protocol, apiKey = '', baseUrl = '') {
+  const cleanKey = String(apiKey || '').trim();
+  const cleanUrl = String(baseUrl || '').trim().toLowerCase();
+  // 特征指纹优先级最高：百度千帆、DeepSeek、阿里云等始终使用 Bearer
+  if (
+    cleanKey.startsWith('bce-v3/') ||
+    cleanUrl.includes('qianfan.baidubce.com') ||
+    cleanUrl.includes('deepseek') ||
+    cleanUrl.includes('dashscope') ||
+    cleanUrl.includes('bigmodel') ||
+    cleanUrl.includes('moonshot') ||
+    cleanUrl.includes('siliconflow')
+  ) {
+    return 'bearer';
+  }
+  if (cleanKey.startsWith('sk-ant-') || cleanUrl.includes('anthropic.com')) {
+    return 'x-api-key';
+  }
+  if (cleanKey.startsWith('AIza') || cleanUrl.includes('generativelanguage.googleapis.com')) {
+    return 'x-goog-api-key';
+  }
   if (protocol === 'anthropic') return 'x-api-key';
   if (protocol === 'gemini') return 'x-goog-api-key';
   return 'bearer';
 }
 
-export function headersFor(protocol, apiKey) {
+export function headersFor(protocol, apiKey, baseUrl = '') {
   const headers = { 'User-Agent': 'SwitchLite/0.1', Accept: 'application/json' };
   if (!apiKey) return headers;
-  const auth = authFor(protocol);
+  const auth = authFor(protocol, apiKey, baseUrl);
   if (auth === 'x-api-key') headers['x-api-key'] = apiKey;
   else if (auth === 'x-goog-api-key') headers['x-goog-api-key'] = apiKey;
   else headers.Authorization = `Bearer ${apiKey}`;
@@ -240,7 +270,7 @@ export async function discoverModels({ baseUrl, apiKey = '', protocol = 'openai'
   if (!base) throw new Error('请先填写 Base URL');
   const candidates = buildModelCandidates(base, protocol);
   if (!candidates.length) throw new Error(`无法解析 Base URL：${baseUrl}`);
-  const headers = headersFor(protocol, apiKey);
+  const headers = headersFor(protocol, apiKey, base);
   const attempts = [];
 
   for (const url of candidates) {
@@ -256,9 +286,12 @@ export async function discoverModels({ baseUrl, apiKey = '', protocol = 'openai'
   }
 
   const authFailed = attempts.some((a) => a.status === 401 || a.status === 403);
+  const rateLimited = attempts.some((a) => a.status === 429);
   const notFound = attempts.length > 0 && attempts.every((a) => a.status === 404 || a.status === 405);
   let msg = `无法从该 URL 获取模型列表（已尝试 ${attempts.length} 个端点）`;
-  if (authFailed) {
+  if (rateLimited) {
+    msg += '：上游供应商接口触发了频率限制 (429 Too Many Requests)，请稍等 5 秒后再试，或在下方直接手动输入模型 ID。';
+  } else if (authFailed) {
     msg += '：API Key 无效或未授权，请检查 API Key 是否正确、是否有模型权限。';
   } else if (notFound) {
     msg += '：这些地址都没有可用的 /models 接口，该服务可能未开放公开模型列表。您可在下方直接手动输入模型 ID 接入。';
@@ -268,7 +301,7 @@ export async function discoverModels({ baseUrl, apiKey = '', protocol = 'openai'
   }
   const err = new Error(msg);
   err.attempts = attempts;
-  err.manualFallback = notFound;
+  err.manualFallback = notFound || rateLimited;
   throw err;
 }
 

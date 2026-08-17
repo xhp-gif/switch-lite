@@ -133,7 +133,10 @@ export default function App() {
       setEditing(r.provider);
       notify('ok', `获取成功：${r.count} 个模型（${r.endpoint}）`);
     } catch (e: unknown) {
-      notify('err', (e as Error).message);
+      const err = e as { message?: string; provider?: Provider };
+      await refreshProviders();
+      if (err.provider) setEditing(err.provider);
+      notify('err', err.message || '获取模型失败');
     }
   };
 

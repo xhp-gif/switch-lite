@@ -87,13 +87,18 @@ async function run() {
       continue;
     }
 
-    const existingAsset = release.assets?.find((a) => a.name === file);
+    // 动态获取最新资产列表并使用归一化文件名匹配（GitHub 会把空格转为点号）
+    const assetsRes = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/${release.id}/assets`, { headers });
+    const assetsList = await assetsRes.json();
+    const norm = (s) => String(s || '').toLowerCase().replace(/[\s\.-]+/g, '');
+    const existingAsset = Array.isArray(assetsList) ? assetsList.find((a) => norm(a.name) === norm(file)) : null;
     if (existingAsset) {
-      console.log(`[release] Deleting existing asset: ${file} (id: ${existingAsset.id})...`);
+      console.log(`[release] Deleting existing asset: ${existingAsset.name} (id: ${existingAsset.id})...`);
       await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/assets/${existingAsset.id}`, {
         method: 'DELETE',
         headers,
       });
+      await new Promise((r) => setTimeout(r, 1000));
     }
 
     const fileSizeMb = (fs.statSync(filePath).size / 1024 / 1024).toFixed(2);

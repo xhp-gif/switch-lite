@@ -54,6 +54,8 @@ export function ProviderEditModal({ provider, preset, busy, onSave, onFetch, onC
     try {
       await onSave(patch);
       await onFetch();
+    } catch {
+      // 错误由 onSave/onFetch 处理并提示 Toast，弹窗内保持打开状态
     } finally {
       setFetching(false);
     }
