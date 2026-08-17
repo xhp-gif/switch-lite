@@ -22,7 +22,9 @@ async function run() {
 
   const owner = 'xhp-gif';
   const repo = 'switch-lite';
-  const tag = 'v0.4.5';
+  const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+  const version = pkg.version;
+  const tag = `v${version}`;
 
   const headers = {
     Authorization: `Bearer ${token}`,
@@ -37,18 +39,21 @@ async function run() {
     console.log(`[release] Creating GitHub Release for ${tag}...`);
     const body = {
       tag_name: tag,
-      name: 'SwitchLite v0.4.5',
-      body: `### SwitchLite v0.4.5 更新日志
+      name: `SwitchLite v${version}`,
+      body: `### SwitchLite v${version} 更新日志
 
-- **内置 Anthropic ↔ OpenAI 双向流式转译引擎**：
-  - 彻底打通 VS Code Claude 插件 / Claude Code CLI 调用纯 OpenAI 格式模型（如百度千帆 \`glm-5.2\`、DeepSeek 官方、智谱、Moonshot 等）；
-  - 支持 SSE 实时打字机流式输出、Reasoning 思考链转译以及工具调用（Tool Use）；
-- **修复 Claude Code 模型可用性检测与白名单拦截**：
-  - 中继端新增 \`/models\` 路由模拟拦截，通过 Claude 客户端本地可用性探测；
-  - 优化 \`settings.json\` 配置写入逻辑，避免顶层字段与官方模型白名单冲突；
-- **设置中新增「本地中继与服务检测」模块**：实时展示中继运行状态与 PID，支持一键「重新检测」与「重启中继」；
-- **UI 风格回归 0.3.0 精简版**：紧凑型双行供应商卡片与自适应滚动条；
-- **全量 34 项自动化单元与集成测试全部通过**。`,
+- **智能 URL 自动补全与 API Key 指纹感知**：
+  - 自动识别纯域名补齐 \`https://\`，自动清洗 \`/chat/completions\` 等动作路径；
+  - 根据 Key 前缀（如 \`bce-v3/\`、\`sk-ant-\`、\`AIza\`、\`sk-or-v1-\`）与域名特征自动感知厂商与协议；
+- **端点探针自适应扫描与 Base URL 自动校准 (Self-Healing)**：
+  - 探测多候选端点，成功命中后自动将 Base URL 修正并持久化为有效版本路径，彻底避免 404；
+- **「编辑供应商」内嵌模型选择器与手动模型 ID 兜底接入**：
+  - 点击「保存并重新获取」即刻在弹窗内展开可用模型列表；
+  - 针对关闭了 \`/models\` 接口的网关，支持直接手动填入任意模型 ID 极简直连；
+- **中继健壮性增强与容错兜底**：
+  - 自动将千帆等厂商的 \`/v1\` 路径纠偏为 \`/v2\`；
+  - 增加已删除/过期供应商 ID 自动回退至活跃供应商机制，规避 Claude Code 缓存导致 502；
+  - Claude Auto 模式三档路由统一对齐主模型，解决分类器打杂任务报错。`,
       draft: false,
       prerelease: false,
     };
@@ -69,10 +74,10 @@ async function run() {
 
   const releaseDir = path.resolve('release');
   const filesToUpload = [
-    'SwitchLite Setup 0.4.5.exe',
-    'SwitchLite-Portable-0.4.5.exe',
+    `SwitchLite Setup ${version}.exe`,
+    `SwitchLite-Portable-${version}.exe`,
     'latest.yml',
-    'SwitchLite Setup 0.4.5.exe.blockmap',
+    `SwitchLite Setup ${version}.exe.blockmap`,
   ];
 
   for (const file of filesToUpload) {
