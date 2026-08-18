@@ -46,7 +46,7 @@ export const AGENTS: Agent[] = [
   },
 ];
 
-export const APP_VERSION = '0.4.5';
+export const APP_VERSION = '0.4.7';
 
 export function agentName(target: Target) {
   return AGENTS.find((a) => a.id === target)?.name || target;
