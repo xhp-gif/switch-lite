@@ -117,9 +117,18 @@ export default function App() {
     if (!editing) return;
     try {
       const updated = await api.updateProvider(editing.id, patch);
-      await refreshProviders();
-      setEditing(updated);
-      notify('ok', '已保存');
+      // 若当前保存的正是当前活跃的供应商，且指定了模型，则自动同步刷新写入 Agent 配置文件
+      if (activeId === editing.id && (updated.selectedModel || patch.selectedModel)) {
+        const modelToApply = updated.selectedModel || (patch.selectedModel as string);
+        await api.applyConfig(updated.id, agent, modelToApply);
+        await Promise.all([refreshProviders(), refreshSettings()]);
+        setEditing(updated);
+        notify('ok', `已保存并自动应用到 ${agentName(agent)}：${modelToApply}`);
+      } else {
+        await refreshProviders();
+        setEditing(updated);
+        notify('ok', '已保存');
+      }
     } catch (e: unknown) {
       notify('err', (e as Error).message);
     }

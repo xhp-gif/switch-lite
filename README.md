@@ -22,7 +22,7 @@ npm install
 npm run dev
 ```
 
-打开 http://127.0.0.1:5173 即可使用。生产模式：
+打开 http://127.0.0.1:9527 即可使用。生产模式：
 
 ```bash
 npm run build

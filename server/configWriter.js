@@ -201,10 +201,15 @@ function applyClaude(provider, modelId) {
   // 模型路由：Claude Code 内部按 Opus/Sonnet/Haiku 三档发请求，
   // 第三方厂商没有这些模型名，需映射到该厂商实际模型。
   // 为确保稳定性，默认所有档位（Sonnet / Opus / Haiku）均统一指向用户选择的主模型 modelId，
-  // 避免自动猜测未授权或不存在的冷门小模型导致 Auto 模式或后台打杂任务报错。
+  // 并同步对齐显示名称 (*_MODEL_NAME)，清理历史残留的 FABLE 键，避免 Claude 扩展下拉显示旧名称。
   settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL = modelId;
+  settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME = modelId;
   settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL = modelId;
+  settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME = modelId;
   settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = modelId;
+  settings.env.ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME = modelId;
+  delete settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL;
+  delete settings.env.ANTHROPIC_DEFAULT_FABLE_MODEL_NAME;
   delete settings.env.ANTHROPIC_SMALL_FAST_MODEL; // 旧键归一化为 DEFAULT_*
   fs.writeFileSync(targets().claude.file, JSON.stringify(settings, null, 2) + '\n', 'utf8');
 }
