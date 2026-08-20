@@ -1,5 +1,8 @@
 // 开机自动启动中继（Windows 注册表 Run 键）：
-// 注册后每次登录系统都会以 --relay-only 模式拉起中继，不开 SwitchLite 窗口 Agent 也能用。
+// 注册后每次登录系统都会以完全静默（无黑框、无弹窗）模式拉起中继，不开 SwitchLite 窗口 Agent 也能用。
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { standalonePath } from './relayLauncher.js';
 
@@ -10,10 +13,31 @@ export function autostartSupported() {
   return process.platform === 'win32';
 }
 
+function ensureSilentVbs() {
+  const home = process.env.CCS_LITE_HOME || path.join(os.homedir(), '.cc-switch-lite');
+  fs.mkdirSync(home, { recursive: true });
+  const vbsPath = path.join(home, 'silent-relay.vbs');
+
+  const exec = process.execPath;
+  const isElectron = !!process.versions.electron;
+  // 桌面版：SwitchLite.exe --relay-only；网页版（node 运行）：node.exe relay-standalone.js
+  const cmd = isElectron ? `""${exec}"" --relay-only` : `""${exec}"" ""${standalonePath()}""`;
+
+  const vbsContent = [
+    `' SwitchLite Silent Relay Autostart (No Window / No Popup)`,
+    `Set WshShell = CreateObject("WScript.Shell")`,
+    `WshShell.Run "${cmd}", 0, False`,
+    `Set WshShell = Nothing`,
+  ].join('\r\n');
+
+  fs.writeFileSync(vbsPath, vbsContent, 'utf8');
+  return vbsPath;
+}
+
 function autostartCommand() {
-  // 桌面版：exe 以 --relay-only 启动；网页版（node 运行）：直接用 node 跑独立中继脚本
-  if (process.versions.electron) return `"${process.execPath}" --relay-only`;
-  return `"${process.execPath}" "${standalonePath()}"`;
+  // 使用 Windows 原生无窗宿主 wscript.exe 执行静默 VBS 脚本（0=隐藏运行）
+  const vbs = ensureSilentVbs();
+  return `wscript.exe "${vbs}"`;
 }
 
 function reg(args) {

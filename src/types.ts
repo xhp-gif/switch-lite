@@ -1,5 +1,27 @@
 export type Protocol = 'openai' | 'anthropic' | 'gemini';
-export type Target = 'claude' | 'codex' | 'gemini' | 'opencode' | 'hermes';
+export type BuiltinTarget =
+  | 'claude'
+  | 'codex'
+  | 'opencode'
+  | 'hermes'
+  | 'cursor'
+  | 'grok'
+  | 'deepseek_harness'
+  | 'tare'
+  | 'qcoder'
+  | 'zcode';
+
+export type Target = BuiltinTarget | string;
+
+export interface CustomAgent {
+  id: string;
+  name: string;
+  icon: string;
+  desc: string;
+  configFile: string;
+  format?: 'json' | 'toml' | 'yaml' | 'env';
+  custom?: boolean;
+}
 
 export interface RecommendedModel {
   id: string;

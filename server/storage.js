@@ -29,7 +29,24 @@ export function listProviders() {
   }
 }
 
-const TARGETS = ['claude', 'codex', 'gemini', 'opencode', 'hermes'];
+export const TARGETS = [
+  'claude',
+  'codex',
+  'opencode',
+  'hermes',
+  'cursor',
+  'grok',
+  'deepseek_harness',
+  'tare',
+  'qcoder',
+  'zcode',
+];
+
+export function isTargetSupported(target) {
+  if (TARGETS.includes(target)) return true;
+  const custom = getCustomAgents();
+  return custom.some((a) => a.id === target);
+}
 
 export function saveProviders(list) {
   ensureDir();
@@ -254,4 +271,26 @@ export function mergeDuplicateProviders() {
   }
   if (remapped.length) saveSettings(settings);
   return { merged: toRemove.length, removed: toRemove, remapped };
+}
+
+function customAgentsFilePath() {
+  return path.join(homeDir(), 'custom-agents.json');
+}
+
+export function getCustomAgents() {
+  try {
+    if (!fs.existsSync(customAgentsFilePath())) return [];
+    const data = JSON.parse(fs.readFileSync(customAgentsFilePath(), 'utf8'));
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveCustomAgents(list) {
+  ensureDir();
+  const tmp = `${customAgentsFilePath()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(Array.isArray(list) ? list : [], null, 2), 'utf8');
+  if (fs.existsSync(customAgentsFilePath())) fs.rmSync(customAgentsFilePath());
+  fs.renameSync(tmp, customAgentsFilePath());
 }

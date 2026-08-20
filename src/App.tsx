@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from './api';
-import { AGENTS, agentName } from './agents';
-import type { Preset, Provider, Settings, Target } from './types';
+import { BUILTIN_AGENTS, DEFAULT_ENABLED_AGENTS, agentName, type Agent } from './agents';
+import type { CustomAgent, Preset, Provider, Settings, Target } from './types';
 import { AgentSidebar } from './components/AgentSidebar';
 import { AGENT_THEME, AgentIcon } from './components/AgentIcon';
 import switchliteIcon from './assets/logos/switchlite.png';
@@ -9,6 +9,7 @@ import { QuickConnect, type ConnectForm } from './components/QuickConnect';
 import { ProviderCard } from './components/ProviderCard';
 import { ProviderEditModal } from './components/ProviderEditModal';
 import { SettingsModal } from './components/SettingsModal';
+import { AgentManageModal } from './components/AgentManageModal';
 import { Toast } from './components/Toast';
 
 type ToastState = { kind: 'ok' | 'err'; text: string } | null;
@@ -29,11 +30,20 @@ export default function App() {
   const [presets, setPresets] = useState<Preset[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
+  const [customAgents, setCustomAgents] = useState<CustomAgent[]>([]);
+  const [enabledAgentIds, setEnabledAgentIds] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('switchlite_enabled_agents');
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return DEFAULT_ENABLED_AGENTS;
+  });
   const [agent, setAgent] = useState<Target>('codex');
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<ToastState>(null);
   const [editing, setEditing] = useState<Provider | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [agentManageOpen, setAgentManageOpen] = useState(false);
   const [speedtesting, setSpeedtesting] = useState<Record<string, boolean>>({});
   const [speedtestingAll, setSpeedtestingAll] = useState(false);
 
@@ -50,6 +60,13 @@ export default function App() {
     setSettings(await api.getSettings());
   }, []);
 
+  const refreshCustomAgents = useCallback(async () => {
+    try {
+      const res = await api.getCustomAgents();
+      setCustomAgents(res.agents || []);
+    } catch {}
+  }, []);
+
   useEffect(() => {
     api
       .presets()
@@ -57,13 +74,37 @@ export default function App() {
       .catch((e) => notify('err', e.message));
     refreshProviders().catch((e) => notify('err', e.message));
     refreshSettings().catch((e) => notify('err', e.message));
+    refreshCustomAgents().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const handleToggleEnabledAgent = (id: string) => {
+    setEnabledAgentIds((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      try {
+        localStorage.setItem('switchlite_enabled_agents', JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  };
+
+  const allAgents: Agent[] = useMemo(() => {
+    return [
+      ...BUILTIN_AGENTS,
+      ...customAgents.map((ca) => ({
+        id: ca.id,
+        name: ca.name,
+        icon: ca.icon || '✦',
+        desc: ca.desc || '自定义智能体',
+        configFile: ca.configFile,
+      })),
+    ];
+  }, [customAgents]);
 
   const connected = useMemo(() => providers.filter((p) => p.target === agent), [providers, agent]);
   const activeId = settings?.active?.[agent] || null;
   const activeProvider = connected.find((p) => p.id === activeId) || null;
-  const currentAgent = AGENTS.find((a) => a.id === agent) || AGENTS[0];
+  const currentAgent = allAgents.find((a) => a.id === agent) || allAgents[0] || BUILTIN_AGENTS[0];
   const presetOf = useCallback((p: Provider) => presets.find((x) => x.id === p.presetId) || null, [presets]);
 
   // 快速接入：保存（或复用）供应商 -> 写入 Agent 配置 -> 设为当前
@@ -226,13 +267,19 @@ export default function App() {
           providers={providers}
           settings={settings}
           selected={agent}
+          customAgents={customAgents}
+          enabledAgentIds={enabledAgentIds}
           onSelect={setAgent}
           onOpenSettings={() => setSettingsOpen(true)}
+          onOpenManageAgents={() => setAgentManageOpen(true)}
         />
         <main className="main" key={agent}>
           <section className="agent-head">
             <div className="agent-head-main">
-              <span className="agent-head-icon" style={{ background: AGENT_THEME[agent].tile }}>
+              <span
+                className="agent-head-icon"
+                style={{ background: (AGENT_THEME[agent] || { tile: '#f4f4f6' }).tile }}
+              >
                 <AgentIcon id={agent} size={32} />
               </span>
               <div>
@@ -305,6 +352,17 @@ export default function App() {
         />
       )}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} onError={(t) => notify('err', t)} />}
+      {agentManageOpen && (
+        <AgentManageModal
+          enabledAgentIds={enabledAgentIds}
+          customAgents={customAgents}
+          onToggleEnabled={handleToggleEnabledAgent}
+          onCustomAgentsChange={setCustomAgents}
+          onSelectAgent={(t) => setAgent(t)}
+          onClose={() => setAgentManageOpen(false)}
+          onError={(t) => notify('err', t)}
+        />
+      )}
       <Toast toast={toast} />
     </div>
   );

@@ -69,7 +69,14 @@ export const api = {
       `/api/providers/${id}/speedtest`,
       { method: 'POST' },
     ),
-  speedtestAll: () => req<{ providers: Provider[] }>('/api/speedtest', { method: 'POST' }),
   updateSettings: (body: Partial<Settings>) => req<Settings>('/api/settings', { method: 'PUT', body: JSON.stringify(body) }),
   history: (target: Target) => req<{ history: HistoryEntry[] }>(`/api/history?target=${target}`),
+  getCustomAgents: () => req<{ agents: import('./types').CustomAgent[] }>('/api/agents/custom'),
+  createCustomAgent: (body: { name: string; icon?: string; configFile: string; format?: string }) =>
+    req<{ agent: import('./types').CustomAgent; agents: import('./types').CustomAgent[] }>('/api/agents/custom', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  deleteCustomAgent: (id: string) =>
+    req<{ ok: boolean; agents: import('./types').CustomAgent[] }>(`/api/agents/custom/${id}`, { method: 'DELETE' }),
 };

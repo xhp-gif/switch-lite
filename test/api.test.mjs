@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../server/app.js';
+import { targets } from '../server/configWriter.js';
 import { startMockServer } from './mock-model-server.mjs';
 
 test('API 全链路：供应商 CRUD -> 获取模型 -> 应用配置', async (t) => {
@@ -124,26 +125,21 @@ test('API 全链路：供应商 CRUD -> 获取模型 -> 应用配置', async (t)
   const openAIClaudeSettings = JSON.parse(fs.readFileSync(path.join(tmp, '.claude', 'settings.json'), 'utf8'));
   assert.equal(openAIClaudeSettings.env.ANTHROPIC_BASE_URL, `http://127.0.0.1:4180/p/${created.id}`);
 
-  // 6.5 Gemini CLI：仅 Gemini 协议可写入
-  const geminiRes = await post('/api/providers', {
-    name: 'Mock Gemini',
-    presetId: 'gemini',
-    target: 'gemini',
-    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
-    apiKey: 'AIza-test',
-    protocol: 'gemini',
+  // 6.5 Cursor：OpenAI 协议写入
+  const cursorRes = await post('/api/providers', {
+    name: 'Mock Cursor',
+    presetId: 'custom',
+    target: 'cursor',
+    baseUrl: 'https://api.openai.com/v1',
+    apiKey: 'sk-cursor-test',
+    protocol: 'openai',
   });
-  const gemini = await geminiRes.json();
-  const geminiApply = await post('/api/config/apply', { providerId: gemini.id, target: 'gemini', modelId: 'gemini-2.5-pro' });
-  assert.equal(geminiApply.status, 200);
-  const geminiSettings = JSON.parse(fs.readFileSync(path.join(tmp, '.gemini', 'settings.json'), 'utf8'));
-  assert.equal(geminiSettings.model, 'gemini-2.5-pro');
-  assert.equal(geminiSettings.env.GEMINI_API_KEY, 'AIza-test');
-  assert.equal(geminiSettings.env.GOOGLE_GEMINI_BASE_URL, `http://127.0.0.1:4180/p/${gemini.id}`, 'Gemini CLI 应经本地中继访问上游');
-
-  const badGemini = await post('/api/config/apply', { providerId: created.id, target: 'gemini', modelId });
-  assert.equal(badGemini.status, 400);
-  assert.match((await badGemini.json()).error, /Gemini/);
+  const cursor = await cursorRes.json();
+  const cursorApply = await post('/api/config/apply', { providerId: cursor.id, target: 'cursor', modelId: 'gpt-4o' });
+  assert.equal(cursorApply.status, 200);
+  const cursorSettings = JSON.parse(fs.readFileSync(targets().cursor.file, 'utf8'));
+  assert.equal(cursorSettings['cursor.currentModel'], 'gpt-4o');
+  assert.equal(cursorSettings['openai.baseUrl'], `http://127.0.0.1:4180/p/${cursor.id}`);
 
   // 6.6 清空当前供应商
   await fetch(`${base}/api/settings/active`, {

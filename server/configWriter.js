@@ -3,20 +3,50 @@ import os from 'node:os';
 import path from 'node:path';
 import { relayProviderUrl, isStrictHost } from './relay.js';
 import { hermesConfigPath, applyHermes } from './hermesConfig.js';
+import { getCustomAgents } from './storage.js';
 
 function homeDir() {
   return process.env.CCS_HOME_OVERRIDE ? path.resolve(process.env.CCS_HOME_OVERRIDE) : os.homedir();
 }
 
-function targets() {
+export function targets() {
   const home = homeDir();
-  return {
+  const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+  const cursorFile =
+    process.platform === 'win32'
+      ? path.join(appData, 'Cursor', 'User', 'settings.json')
+      : path.join(home, '.cursor', 'settings.json');
+
+  const baseTargets = {
     claude: { label: 'Claude Code', file: path.join(home, '.claude', 'settings.json') },
     codex: { label: 'Codex CLI', file: path.join(home, '.codex', 'config.toml') },
-    gemini: { label: 'Gemini CLI', file: path.join(home, '.gemini', 'settings.json') },
     opencode: { label: 'OpenCode', file: path.join(home, '.config', 'opencode', 'opencode.json') },
     hermes: { label: 'Hermes Agent', file: hermesConfigPath() },
+    cursor: { label: 'Cursor', file: cursorFile },
+    grok: { label: 'Grok CLI', file: path.join(home, '.grok', 'config.json') },
+    deepseek_harness: { label: 'DeepSeek Harness', file: path.join(home, '.deepseek', 'harness.json') },
+    tare: { label: 'Tare CLI', file: path.join(home, '.tare', 'config.json') },
+    qcoder: { label: 'QCoder', file: path.join(home, '.qcoder', 'settings.json') },
+    zcode: { label: 'ZCode', file: path.join(home, '.zcode', 'config.json') },
   };
+
+  try {
+    const custom = getCustomAgents();
+    for (const c of custom) {
+      if (c && c.id && c.configFile) {
+        baseTargets[c.id] = {
+          label: c.name || c.id,
+          file: c.configFile.startsWith('~') ? path.join(home, c.configFile.slice(1)) : path.resolve(c.configFile),
+          custom: true,
+          format: c.format || 'json',
+        };
+      }
+    }
+  } catch {
+    /* 自定义 Agent 解析失败静默 */
+  }
+
+  return baseTargets;
 }
 
 function backup(file) {
@@ -424,6 +454,96 @@ function restoreSnapshots(snaps) {
   }
 }
 
+export function applyCursor(provider, modelId) {
+  const file = targets().cursor.file;
+  const current = readJson(file);
+  current['cursor.models'] = Array.from(new Set([modelId, ...(current['cursor.models'] || [])]));
+  current['cursor.currentModel'] = modelId;
+  current['cursor.openaiBaseUrl'] = relayProviderUrl(provider.id);
+  current['cursor.openaiApiKey'] = provider.apiKey || 'sk-switchlite';
+  current['openai.baseUrl'] = relayProviderUrl(provider.id);
+  current['openai.apiKey'] = provider.apiKey || 'sk-switchlite';
+  current['openai.model'] = modelId;
+  writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+}
+
+export function applyGrok(provider, modelId) {
+  const file = targets().grok.file;
+  const current = readJson(file);
+  current.api_base = relayProviderUrl(provider.id);
+  current.api_key = provider.apiKey || 'sk-switchlite';
+  current.model = modelId;
+  current.provider = provider.name;
+  writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+}
+
+export function applyDeepSeekHarness(provider, modelId) {
+  const file = targets().deepseek_harness.file;
+  const current = readJson(file);
+  current.base_url = relayProviderUrl(provider.id);
+  current.api_key = provider.apiKey || 'sk-switchlite';
+  current.model = modelId;
+  current.provider_name = provider.name;
+  current.updated_at = new Date().toISOString();
+  writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+}
+
+export function applyTare(provider, modelId) {
+  const file = targets().tare.file;
+  const current = readJson(file);
+  current.endpoint = relayProviderUrl(provider.id);
+  current.apiKey = provider.apiKey || 'sk-switchlite';
+  current.model = modelId;
+  current.active = true;
+  writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+}
+
+export function applyQCoder(provider, modelId) {
+  const file = targets().qcoder.file;
+  const current = readJson(file);
+  current.openai_base_url = relayProviderUrl(provider.id);
+  current.openai_api_key = provider.apiKey || 'sk-switchlite';
+  current.default_model = modelId;
+  current.provider = provider.name;
+  writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+}
+
+export function applyZCode(provider, modelId) {
+  const file = targets().zcode.file;
+  const current = readJson(file);
+  current.baseUrl = relayProviderUrl(provider.id);
+  current.apiKey = provider.apiKey || 'sk-switchlite';
+  current.model = modelId;
+  current.timestamp = new Date().toISOString();
+  writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+}
+
+export function applyCustomAgent(customTarget, provider, modelId) {
+  const t = targets()[customTarget];
+  if (!t || !t.file) return;
+  const file = t.file;
+  const format = t.format || 'json';
+  if (format === 'json') {
+    const current = readJson(file);
+    current.baseUrl = relayProviderUrl(provider.id);
+    current.base_url = relayProviderUrl(provider.id);
+    current.apiKey = provider.apiKey || 'sk-switchlite';
+    current.api_key = provider.apiKey || 'sk-switchlite';
+    current.model = modelId;
+    current.modelId = modelId;
+    writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+  } else {
+    const lines = [
+      `# SwitchLite Generated Config for ${t.label}`,
+      `base_url = "${relayProviderUrl(provider.id)}"`,
+      `api_key = "${provider.apiKey || 'sk-switchlite'}"`,
+      `model = "${modelId}"`,
+      `updated_at = "${new Date().toISOString()}"`,
+    ];
+    writeFileAtomic(file, lines.join('\n') + '\n');
+  }
+}
+
 export function applyConfig({ target, provider, modelId }) {
   const t = targets()[target];
   if (!t) throw new Error(`未知目标应用: ${target}`);
@@ -443,6 +563,13 @@ export function applyConfig({ target, provider, modelId }) {
     else if (target === 'gemini') applyGemini(provider, modelId);
     else if (target === 'opencode') applyOpenCode(provider, modelId);
     else if (target === 'hermes') applyHermes(provider, modelId);
+    else if (target === 'cursor') applyCursor(provider, modelId);
+    else if (target === 'grok') applyGrok(provider, modelId);
+    else if (target === 'deepseek_harness') applyDeepSeekHarness(provider, modelId);
+    else if (target === 'tare') applyTare(provider, modelId);
+    else if (target === 'qcoder') applyQCoder(provider, modelId);
+    else if (target === 'zcode') applyZCode(provider, modelId);
+    else if (t.custom) applyCustomAgent(target, provider, modelId);
   } catch (err) {
     restoreSnapshots(snaps);
     const e = new Error(`${err.message}（配置已自动还原，未产生半成品改动）`);

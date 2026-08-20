@@ -196,10 +196,42 @@ export function createApp() {
   // 切换历史：接入记录 + 中继实际调用记录，按模型去重
   app.get('/api/history', (req, res) => {
     const target = String(req.query.target || '');
-    if (!['claude', 'codex', 'gemini', 'opencode', 'hermes'].includes(target)) {
+    if (!storage.isTargetSupported(target)) {
       return res.status(400).json({ error: '未知 Agent' });
     }
     res.json({ history: storage.getHistory(target, readUsage()) });
+  });
+
+  // 自定义 Agent 管理
+  app.get('/api/agents/custom', (req, res) => {
+    res.json({ agents: storage.getCustomAgents() });
+  });
+
+  app.post('/api/agents/custom', (req, res) => {
+    const { name, icon = '✦', configFile, format = 'json' } = req.body || {};
+    if (!name || !name.trim() || !configFile || !configFile.trim()) {
+      return res.status(400).json({ error: '请填写 Agent 名称与配置文件路径' });
+    }
+    const id = 'custom_' + name.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_') + '_' + Date.now().toString(36);
+    const newAgent = {
+      id,
+      name: name.trim(),
+      icon: icon.trim() || '✦',
+      desc: '用户自定义 Agent 智能体',
+      configFile: configFile.trim(),
+      format: format || 'json',
+      custom: true,
+    };
+    const list = storage.getCustomAgents();
+    list.push(newAgent);
+    storage.saveCustomAgents(list);
+    res.json({ agent: newAgent, agents: list });
+  });
+
+  app.delete('/api/agents/custom/:id', (req, res) => {
+    const list = storage.getCustomAgents().filter((a) => a.id !== req.params.id);
+    storage.saveCustomAgents(list);
+    res.json({ ok: true, agents: list });
   });
 
   app.get('/api/config/status', (req, res) => {
