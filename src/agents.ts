@@ -85,7 +85,7 @@ export const AGENTS = BUILTIN_AGENTS;
 
 export const DEFAULT_ENABLED_AGENTS = ['codex', 'claude', 'cursor', 'grok', 'deepseek_harness', 'opencode'];
 
-export const APP_VERSION = '0.4.8';
+export const APP_VERSION = '0.4.9';
 
 export function agentName(target: Target, customAgents: Agent[] = []) {
   const all = [...BUILTIN_AGENTS, ...customAgents];

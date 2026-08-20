@@ -56,7 +56,19 @@ describe('Anthropic ↔ OpenAI 协议适配器', () => {
 
     assert.equal(openaiReq.model, 'glm-5.2');
     assert.equal(openaiReq.max_tokens, 2048);
-    assert.equal(openaiReq.temperature, 0.5);
+    // temperature 不转发：Claude Code 分类器固定发 temperature:0，
+    // 而 K3/DeepSeek-R1/GLM 思考模型只接受默认值 1，转发会 400（“分类器错误”）
+    assert.equal(openaiReq.temperature, undefined);
+    assert.equal(openaiReq.top_p, undefined);
+    // 小预算（≤2048）辅助请求注入关思考，避免思考型模型耗尽预算/超时（“分类器不可用”）
+    assert.equal(openaiReq.reasoning_effort, 'none');
+    assert.equal(openaiReq.thinking.type, 'disabled');
+
+    // 大预算（主对话）不注入，保留思考能力
+    const bigStr = anthropicToOpenAI({ ...anthropicReq, max_tokens: 16384 });
+    const bigReq = JSON.parse(bigStr);
+    assert.equal(bigReq.reasoning_effort, undefined);
+    assert.equal(bigReq.thinking, undefined);
 
     // 检查系统提示词
     assert.equal(openaiReq.messages[0].role, 'system');

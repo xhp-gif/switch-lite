@@ -18,8 +18,18 @@ export function anthropicToOpenAI(body, targetModel = '') {
   };
 
   if (typeof body.max_tokens === 'number') out.max_tokens = body.max_tokens;
-  if (typeof body.temperature === 'number') out.temperature = body.temperature;
-  if (typeof body.top_p === 'number') out.top_p = body.top_p;
+  // 不转发 temperature/top_p：Claude Code auto 模式的权限分类器固定发 temperature:0，
+  // 而 K3 / DeepSeek-R1 / GLM 思考模型等只接受默认值（≠1 直接 400 invalid temperature），
+  // 转发会导致分类器 sideQuery 必挂，界面表现为“分类器错误”；采样参数对编码 Agent 影响可忽略。
+
+  // Claude Code 的 auto 模式分类器等辅助调用 max_tokens 很小（≤2048），思考型模型（K3 等）
+  // 会把预算耗在 reasoning 上：content 为空或耗时撞超时，界面报“分类器不可用”。
+  // 小预算请求注入关思考参数（OpenAI 风格 reasoning_effort + Anthropic 风格 thinking，双保险），
+  // 判定 JSON 秒回；主对话（大预算）不注入，保留思考能力。
+  if (typeof body.max_tokens === 'number' && body.max_tokens <= 2048) {
+    out.reasoning_effort = 'none';
+    out.thinking = { type: 'disabled' };
+  }
 
   // 1. 系统提示词处理
   if (body.system) {
@@ -96,7 +106,7 @@ export function anthropicToOpenAI(body, targetModel = '') {
             content: [
               {
                 type: 'image_url',
-                image_url: { url: `data:${mediaType};base64 street,${data}` },
+                image_url: { url: `data:${mediaType};base64,${data}` },
               },
             ],
           });

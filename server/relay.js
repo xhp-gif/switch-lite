@@ -453,7 +453,7 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
       const isLast = i === chain.length - 1;
       const proto = p.protocol || 'openai';
       let upstream = proto === 'anthropic' && p.anthropicUrl ? p.anthropicUrl : p.baseUrl;
-      const isNativeAnthropic = proto === 'anthropic' && (p.presetId === 'anthropic' || String(upstream).includes('anthropic.com') || Boolean(p.anthropicUrl));
+      const isNativeAnthropic = proto === 'anthropic' && (p.presetId === 'anthropic' || String(upstream).includes('anthropic.com') || Boolean(p.anthropicUrl) || /api\.kimi\.com\/coding\/v1/i.test(String(upstream)));
       const shouldAdapt = isAnthropicReq && !isNativeAnthropic;
 
       upstream = String(upstream).replace(/\/+$/, '');
@@ -474,6 +474,24 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
         outBody = stripUnsupportedTools(body);
       }
 
+      // native-Anthropic gateway (non-official, e.g. Kimi coding v1) request tweak:
+      // (Claude Code auto mode classifier sends max_tokens<=2048; K3 thinking eats that budget,
+      //  so content comes back empty/slow -> relay reports classifier error).
+      // Needs "thinking":{"type":"disabled"} as native Anthropic body; OpenAI path already handles via reasoning_effort.
+      if (!shouldAdapt && isAnthropicReq && proto === 'anthropic' && isNativeAnthropic && !String(upstream).includes('anthropic.com')) {
+        try {
+          const obj = JSON.parse(outBody);
+          if (obj && typeof obj.max_tokens === 'number' && obj.max_tokens > 0 && obj.max_tokens <= 2048) {
+            if (!obj.thinking || typeof obj.thinking !== 'object') {
+              obj.thinking = { type: 'disabled' };
+            }
+            outBody = JSON.stringify(obj);
+          }
+        } catch {
+          /* not JSON: pass through */
+        }
+      }
+
       const headers = { ...req.headers };
       delete headers.authorization;
       delete headers['x-api-key'];
@@ -487,7 +505,13 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
         else if (proto === 'gemini') headers['x-goog-api-key'] = p.apiKey;
         else headers.authorization = `Bearer ${p.apiKey}`;
       }
-      const target = `${upstream}/${targetPath}`;
+      // Kimi coding base ?? https://api.kimi.com/coding/v1?Claude Code ?????? /v1/messages?
+      // ??????? /coding/v1/v1/messages -> 404??? Anthropic ?????? v1 ???
+      let buildPath = targetPath;
+      if (!shouldAdapt && proto === 'anthropic' && /\/v1\/?$/i.test(upstream)) {
+        buildPath = String(targetPath).replace(/^\/?v1\//i, '');
+      }
+      const target = `${upstream}/${buildPath}`;
       headers.host = new URL(target).host;
       headers['content-length'] = Buffer.byteLength(outBody);
 
@@ -575,11 +599,19 @@ function handleLegacyRoute(req, res) {
 export function startRelay() {
   const startedAt = Date.now();
   const server = http.createServer((req, res) => {
-    console.log(`[relay req] ${req.method} ${req.url}`);
+    console.log(`[relay ${new Date().toISOString()}] ${req.method} ${req.url}`);
     // 健康检查：供启动器判断中继是否存活、是否需要按代码新旧替换
     if (req.method === 'GET' && (req.url === '/__health' || req.url === '/__health/')) {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, pid: process.pid, startedAt }));
+      return;
+    }
+    // Claude Code 启动时会探活 HEAD /api/hello，第三方上游没有该路径会返回 404，
+    // 客户端据此把 auto 模式分类器标记为"不可用"（整个会话内不再重试）；
+    // 与 claude-code-router 等中转的做法一致，本地直接代答 200。
+    if ((req.method === 'HEAD' || req.method === 'GET') && /\/api\/hello\/?$/.test(String(req.url || ''))) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{}');
       return;
     }
     const m = String(req.url || '').match(/^\/p\/([A-Za-z0-9-]+)\/?(.*)$/);
