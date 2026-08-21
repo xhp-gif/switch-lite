@@ -42,18 +42,32 @@ async function run() {
       name: `SwitchLite v${version}`,
       body: `### SwitchLite v${version} 更新日志
 
-- **智能 URL 自动补全与 API Key 指纹感知**：
-  - 自动识别纯域名补齐 \`https://\`，自动清洗 \`/chat/completions\` 等动作路径；
-  - 根据 Key 前缀（如 \`bce-v3/\`、\`sk-ant-\`、\`AIza\`、\`sk-or-v1-\`）与域名特征自动感知厂商与协议；
-- **端点探针自适应扫描与 Base URL 自动校准 (Self-Healing)**：
-  - 探测多候选端点，成功命中后自动将 Base URL 修正并持久化为有效版本路径，彻底避免 404；
-- **「编辑供应商」内嵌模型选择器与手动模型 ID 兜底接入**：
-  - 点击「保存并重新获取」即刻在弹窗内展开可用模型列表；
-  - 针对关闭了 \`/models\` 接口的网关，支持直接手动填入任意模型 ID 极简直连；
-- **中继健壮性增强与容错兜底**：
-  - 自动将千帆等厂商的 \`/v1\` 路径纠偏为 \`/v2\`；
-  - 增加已删除/过期供应商 ID 自动回退至活跃供应商机制，规避 Claude Code 缓存导致 502；
-  - Claude Auto 模式三档路由统一对齐主模型，解决分类器打杂任务报错。`,
+#### 分类器修复（Claude Code auto 模式）
+- 精准识别 auto 模式安全分类器 sidechain 请求，本地秒回 \`<block>no</block>\`，与模型/供应商无关——换 DeepSeek / Kimi / GLM 等任意模型都不再报 "Wait a moment and then try this action again"；
+- 修复中继转译流的 \`message_delta.usage\` 缺 \`input_tokens\` 导致 Claude Code 内部崩溃、分类器整会话熔断的问题；
+- 识别只看系统提示词，不再扫描会话历史，彻底避免误劫持正常对话（v0.5.0 引入的回归）。
+
+#### 中继健壮性与安全
+- 上游响应头超时 90s（\`CCS_RELAY_HEADER_TIMEOUT\` 可调）：挂死网关不再让请求无限悬挂，可正常触发故障转移；
+- 清理逐跳/编码头，修复 chunked 请求构造出非法上游请求、gzip 响应破坏协议转译的问题；
+- \`npm start\` 网页版改绑 \`127.0.0.1\`（管理 API 含 Key，不再暴露局域网）；
+- \`/models\` 只返回供应商真实模型，去掉硬编码 claude-*/glm-* 名单。
+
+#### 协议适配器
+- finish_reason 后迟到的 usage chunk 不再丢失（用量看板 input 不再为 0）；
+- 图片与文本合成单条多部分消息并保留块顺序；\`tool_choice\` / \`stop_sequences\` 正确映射。
+
+#### Codex 配置保护
+- 切换供应商不再删除 \`[mcp_servers]\` 配置段；
+- \`auth.json\` 合并写入 \`OPENAI_API_KEY\`，保留 ChatGPT OAuth 登录态；
+- \`.bak\` 备份自动清理，每个文件只保留最近 5 份。
+
+#### Gemini 回归
+- 恢复 Gemini CLI 为可用目标（v0.4.8 起误丢），官方四角星渐变图标加入「官方支持库」按需启用。
+
+#### 其他
+- \`/api/health\` 版本号改读 package.json；\`PUT /api/settings/active\` 支持全部新 Agent 与自定义 Agent；
+- 会话日志回填只消费完整行，不再丢失正在写入的事件。`,
       draft: false,
       prerelease: false,
     };
