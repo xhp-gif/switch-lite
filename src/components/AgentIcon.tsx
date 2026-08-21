@@ -50,10 +50,15 @@ const ZHIPU_PATH =
 const OPENCODE_PATH =
   'M22 24H2V0h20zM17 4.8H7v14.4h10z';
 
+// 10. Google 官方 Gemini 四角星 Spark Logo（取自官方品牌 SVG，经 transform 映射进 24×24 视窗）
+const GEMINI_SPARK =
+  'M234.123 41.2204C235.489 44.3354 236.172 47.6638 236.172 51.2055C236.172 47.6638 236.833 44.3354 238.156 41.2204C239.521 38.1054 241.356 35.3958 243.66 33.0916C245.965 30.7873 248.674 28.9738 251.789 27.651C254.904 26.2855 258.233 25.6028 261.774 25.6028C258.233 25.6028 254.904 24.9414 251.789 23.6185C248.674 22.2531 245.965 20.4182 243.66 18.114C241.356 15.8097 239.521 13.1001 238.156 9.98507C236.833 6.87007 236.172 3.54171 236.172 0C236.172 3.54171 235.489 6.87007 234.123 9.98507C232.801 13.1001 230.987 15.8097 228.683 18.114C226.379 20.4182 223.669 22.2531 220.554 23.6185C217.439 24.9414 214.111 25.6028 210.569 25.6028C214.111 25.6028 217.439 26.2855 220.554 27.651C223.669 28.9738 226.379 30.7873 228.683 33.0916C230.987 35.3958 232.801 38.1054 234.123 41.2204Z';
+
 // 官方品牌色与卡片底色方案
 export const AGENT_THEME: Record<string, { tile: string; icon: string; accent: string }> = {
   codex: { tile: '#f4f4f6', icon: '#3941FF', accent: '#3941FF' },
   claude: { tile: '#fff8f5', icon: '#D97757', accent: '#D97757' },
+  gemini: { tile: '#f1f5ff', icon: '', accent: '#4285F4' }, // 图标用官方渐变，icon 色留空
   cursor: { tile: '#101014', icon: '#ffffff', accent: '#6366f1' },
   grok: { tile: '#09090b', icon: '#ffffff', accent: '#09090b' },
   deepseek_harness: { tile: '#eff6ff', icon: '#1d4ed8', accent: '#2563eb' },
@@ -172,6 +177,28 @@ export function AgentIcon({ id, size = 24, className }: Props) {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <path fill="#ffffff" fillRule="evenodd" d={OPENCODE_PATH} />
+      </svg>
+    );
+  }
+
+  // 10. Google 官方 Gemini 四角星 Spark Logo（蓝→紫→珊瑚红官方渐变）
+  if (id === 'gemini') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
+        <defs>
+          <linearGradient id={`gemini-${uid}`} x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#4285F4" />
+            <stop offset=".5" stopColor="#9B72CB" />
+            <stop offset="1" stopColor="#D96570" />
+          </linearGradient>
+        </defs>
+        <path
+          fill={`url(#gemini-${uid})`}
+          fillRule="evenodd"
+          clipRule="evenodd"
+          d={GEMINI_SPARK}
+          transform="translate(2 2) scale(0.390625) translate(-210.569 0)"
+        />
       </svg>
     );
   }

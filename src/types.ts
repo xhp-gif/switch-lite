@@ -2,6 +2,7 @@ export type Protocol = 'openai' | 'anthropic' | 'gemini';
 export type BuiltinTarget =
   | 'claude'
   | 'codex'
+  | 'gemini'
   | 'opencode'
   | 'hermes'
   | 'cursor'

@@ -16,6 +16,14 @@ import { RELAY_PORT, RELAY_ORIGIN } from './relay.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const distDir = path.resolve(__dirname, '..', 'dist');
+// 版本号以 package.json 为准（之前硬编码过 0.4.7，升版后忘了改）
+const APP_VERSION = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.resolve(__dirname, '..', 'package.json'), 'utf8')).version || '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 // 检测原版 CC Switch 是否在运行：它会持续回写 Codex 配置，
 // 与 SwitchLite 同时使用时会把刚写入的配置覆盖掉。
@@ -52,7 +60,7 @@ export function createApp() {
   }
 
   app.get('/api/health', async (req, res) => {
-    res.json({ ok: true, version: '0.4.7', ccSwitchRunning: await ccSwitchRunning() });
+    res.json({ ok: true, version: APP_VERSION, ccSwitchRunning: await ccSwitchRunning() });
   });
 
   app.get('/api/presets', (req, res) => {
@@ -69,7 +77,8 @@ export function createApp() {
 
   app.put('/api/settings/active', (req, res) => {
     const { target, providerId } = req.body || {};
-    if (!['claude', 'codex', 'gemini', 'opencode', 'hermes'].includes(target)) {
+    // 与 storage.TARGETS + 自定义 Agent 保持一致（之前硬编码五 Agent 白名单，新增的 cursor/grok/zcode 等会被误拒）
+    if (!storage.isTargetSupported(target)) {
       return res.status(400).json({ error: '未知 Agent' });
     }
     if (providerId && !storage.getProvider(providerId)) {

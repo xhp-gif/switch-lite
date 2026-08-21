@@ -222,7 +222,11 @@ export function syncSessionLogs() {
       let offset = prev.offset || 0;
       if (offset > stat.size || stat.mtimeMs < prev.mtimeMs) offset = 0;
       const buf = fs.readFileSync(file);
-      const text = buf.subarray(offset).toString('utf8');
+      // 只消费到最后一个完整换行：正在写入的半行这次跳过、下次补齐，
+      // 否则半行被消费后其补全部分永远解析不出来（该条用量丢失）
+      const lastNl = buf.lastIndexOf(0x0a);
+      const end = lastNl >= offset ? lastNl + 1 : offset;
+      const text = buf.subarray(offset, end).toString('utf8');
       const lines = text.split('\n');
       const stateInFile = { model: offset > 0 ? prev.model || '' : '' };
       for (const line of lines) {
@@ -235,7 +239,7 @@ export function syncSessionLogs() {
           imported += 1;
         }
       }
-      state.files[file] = { mtimeMs: stat.mtimeMs, offset: stat.size, count: 0, model: stateInFile.model || undefined };
+      state.files[file] = { mtimeMs: stat.mtimeMs, offset: end, count: 0, model: stateInFile.model || undefined };
     } catch {
       /* 单文件失败不影响其他文件 */
     }

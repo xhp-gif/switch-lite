@@ -9,6 +9,7 @@ ensureRelay()
   .then((r) => console.log(`[relay] ${r.status}${r.pid ? ` (pid ${r.pid})` : ''}`))
   .catch((err) => console.error('[relay] 启动失败:', err.message));
 
-app.listen(port, () => {
+// 只绑回环地址：管理 API 的响应里带各供应商 API Key，绑 0.0.0.0 会暴露到局域网
+app.listen(port, '127.0.0.1', () => {
   console.log(`SwitchLite 服务已启动: http://127.0.0.1:${port}`);
 });

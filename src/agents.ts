@@ -17,6 +17,13 @@ export const BUILTIN_AGENTS: Agent[] = [
     configFile: '~/.codex/config.toml',
   },
   {
+    id: 'gemini',
+    name: 'Gemini CLI',
+    icon: '✧',
+    desc: 'Google 官方 CLI，需要 Gemini 协议供应商（官方 API 或兼容网关）',
+    configFile: '~/.gemini/settings.json',
+  },
+  {
     id: 'claude',
     name: 'Claude Code',
     icon: '✳',
@@ -85,7 +92,7 @@ export const AGENTS = BUILTIN_AGENTS;
 
 export const DEFAULT_ENABLED_AGENTS = ['codex', 'claude', 'cursor', 'grok', 'deepseek_harness', 'opencode'];
 
-export const APP_VERSION = '0.4.9';
+export const APP_VERSION = '0.5.1';
 
 export function agentName(target: Target, customAgents: Agent[] = []) {
   const all = [...BUILTIN_AGENTS, ...customAgents];

@@ -167,4 +167,80 @@ describe('Anthropic ↔ OpenAI 协议适配器', () => {
     assert.ok(fullOutput.includes('event: message_delta'), '应产生 message_delta 事件');
     assert.ok(fullOutput.includes('event: message_stop'), '应产生 message_stop 事件');
   });
+
+  it('流式响应转换：finish_reason 之后迟到的 usage chunk 不丢失（message_delta 带最终 input_tokens）', async () => {
+    const chunks = [];
+    const mockRes = {
+      write(data) {
+        chunks.push(data);
+      },
+      end() {
+        chunks.push('[END]');
+      },
+    };
+
+    const transformer = createOpenAIToAnthropicStreamTransformer(mockRes, 'deepseek-v4-flash');
+    transformer.write('data: {"choices":[{"index":0,"delta":{"content":"ok"}}]}\n\n');
+    transformer.write('data: {"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}\n\n');
+    // DeepSeek/千帆等会把 usage 放在 finish_reason 之后的独立 chunk
+    transformer.write('data: {"choices":[],"usage":{"prompt_tokens":777,"completion_tokens":42}}\n\n');
+    transformer.write('data: [DONE]\n\n');
+    transformer.end();
+
+    const fullOutput = chunks.join('');
+    const deltaMatch = fullOutput.match(/event: message_delta\ndata: (.+)\n/);
+    assert.ok(deltaMatch, '应产生 message_delta 事件');
+    const delta = JSON.parse(deltaMatch[1]);
+    assert.equal(delta.usage.input_tokens, 777, '迟到的 usage 应计入 message_delta');
+    assert.equal(delta.usage.output_tokens, 42);
+    assert.equal(delta.delta.stop_reason, 'end_turn');
+    // message_delta 只能出现一次（finish_reason 不得提前收流）
+    assert.equal((fullOutput.match(/event: message_delta/g) || []).length, 1);
+  });
+
+  it('请求转换：tool_choice 与 stop_sequences 映射到 OpenAI 格式', () => {
+    const base = {
+      model: 'glm-5.2',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: 'hi' }],
+      tools: [{ name: 'read_file', input_schema: { type: 'object' } }],
+    };
+    const any = JSON.parse(anthropicToOpenAI({ ...base, tool_choice: { type: 'any' } }));
+    assert.equal(any.tool_choice, 'required');
+    const forced = JSON.parse(anthropicToOpenAI({ ...base, tool_choice: { type: 'tool', name: 'read_file' } }));
+    assert.deepEqual(forced.tool_choice, { type: 'function', function: { name: 'read_file' } });
+    // 无工具时不映射（避免严格网关 400）
+    const noTools = JSON.parse(anthropicToOpenAI({ ...base, tools: undefined, tool_choice: { type: 'any' } }));
+    assert.equal(noTools.tool_choice, undefined);
+
+    const stopped = JSON.parse(anthropicToOpenAI({ ...base, stop_sequences: ['\n\n', 'END'] }));
+    assert.deepEqual(stopped.stop, ['\n\n', 'END']);
+  });
+
+  it('请求转换：文本 + 图片合成单条多部分消息，保持原始块顺序', () => {
+    const req = {
+      model: 'glm-5.2',
+      max_tokens: 1024,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: '看这张图' },
+            { type: 'image', source: { media_type: 'image/png', data: 'aW1n' } },
+            { type: 'text', text: '有什么问题' },
+          ],
+        },
+      ],
+    };
+    const out = JSON.parse(anthropicToOpenAI(req));
+    assert.equal(out.messages.length, 1, '文本+图片应是同一条消息');
+    const content = out.messages[0].content;
+    assert.equal(content.length, 3);
+    assert.equal(content[0].type, 'text');
+    assert.equal(content[0].text, '看这张图');
+    assert.equal(content[1].type, 'image_url');
+    assert.equal(content[1].image_url.url, 'data:image/png;base64,aW1n');
+    assert.equal(content[2].type, 'text');
+    assert.equal(content[2].text, '有什么问题');
+  });
 });

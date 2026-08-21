@@ -32,6 +32,7 @@ export function listProviders() {
 export const TARGETS = [
   'claude',
   'codex',
+  'gemini',
   'opencode',
   'hermes',
   'cursor',
@@ -52,8 +53,7 @@ export function saveProviders(list) {
   ensureDir();
   const tmp = `${filePath()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(list, null, 2), 'utf8');
-  if (fs.existsSync(filePath())) fs.rmSync(filePath());
-  fs.renameSync(tmp, filePath());
+  fs.renameSync(tmp, filePath()); // Windows 上 rename 会覆盖目标，无需先删（先删反而有丢文件窗口）
 }
 
 export function getProvider(id) {
@@ -209,7 +209,6 @@ function saveSettings(settings) {
   ensureDir();
   const tmp = `${settingsFilePath()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(settings, null, 2), 'utf8');
-  if (fs.existsSync(settingsFilePath())) fs.rmSync(settingsFilePath());
   fs.renameSync(tmp, settingsFilePath());
 }
 
@@ -291,6 +290,5 @@ export function saveCustomAgents(list) {
   ensureDir();
   const tmp = `${customAgentsFilePath()}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(Array.isArray(list) ? list : [], null, 2), 'utf8');
-  if (fs.existsSync(customAgentsFilePath())) fs.rmSync(customAgentsFilePath());
   fs.renameSync(tmp, customAgentsFilePath());
 }

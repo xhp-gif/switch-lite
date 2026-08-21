@@ -20,6 +20,7 @@ export function targets() {
   const baseTargets = {
     claude: { label: 'Claude Code', file: path.join(home, '.claude', 'settings.json') },
     codex: { label: 'Codex CLI', file: path.join(home, '.codex', 'config.toml') },
+    gemini: { label: 'Gemini CLI', file: path.join(home, '.gemini', 'settings.json') },
     opencode: { label: 'OpenCode', file: path.join(home, '.config', 'opencode', 'opencode.json') },
     hermes: { label: 'Hermes Agent', file: hermesConfigPath() },
     cursor: { label: 'Cursor', file: cursorFile },
@@ -54,15 +55,28 @@ function backup(file) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const bak = `${file}.bak-${stamp}`;
   fs.copyFileSync(file, bak);
+  pruneBackups(file);
   return bak;
+}
+
+// 每个文件只保留最近 KEEP 份 .bak-*，避免长期切换无限累积
+const BACKUP_KEEP = 5;
+function pruneBackups(file) {
+  try {
+    const dir = path.dirname(file);
+    const base = path.basename(file);
+    const baks = fs.readdirSync(dir).filter((f) => f.startsWith(`${base}.bak-`)).sort(); // ISO 戳字典序即时间序
+    for (const old of baks.slice(0, -BACKUP_KEEP)) fs.rmSync(path.join(dir, old));
+  } catch {
+    /* 清理失败不影响主流程 */
+  }
 }
 
 function writeFileAtomic(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp-${process.pid}`;
   fs.writeFileSync(tmp, content, 'utf8');
-  if (fs.existsSync(file)) fs.rmSync(file);
-  fs.renameSync(tmp, file);
+  fs.renameSync(tmp, file); // Windows 上 rename 会覆盖目标，无需先删（先删反而有丢文件窗口）
 }
 
 export function configStatus() {
@@ -180,10 +194,12 @@ export function patchCodexToml(existing, block) {
       else continue;
     }
     if (
-      /^\[model_providers\.(csl_|custom)/.test(trimmed) ||
-      /^\[mcp_servers\]/.test(trimmed) ||
-      /^\[mcp_servers\./.test(trimmed)
+      /^\[model_providers\.(csl_|custom)/.test(trimmed)
     ) {
+      // 只跳过我们自己管理的 model_providers 段；
+      // [mcp_servers] 是用户自己配的 MCP 服务器，必须保留——
+      // 严格网关的工具兼容已由中继在网络层处理（stripUnsupportedTools），
+      // 在配置文件里删掉会直接弄丢用户的 MCP 配置。
       skipping = true;
       currentSection = null;
       continue;
@@ -352,14 +368,20 @@ function applyCodex(provider, modelId) {
 }
 
 // Codex 的鉴权层读取 ~/.codex/auth.json 的 OPENAI_API_KEY（与 CC Switch 行为一致）。
-// 切换供应商时把该供应商的 key 写入，并备份原文件以便恢复。
+// 切换供应商时合并写入该字段：保留文件里的其他内容（如 ChatGPT OAuth 登录态），
+// 整体覆盖会把用户的 OpenAI 登录清掉。写入前仍做备份以便恢复。
 function writeCodexAuth(provider) {
   const authFile = path.join(homeDir(), '.codex', 'auth.json');
-  if (fs.existsSync(authFile)) {
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
-    fs.copyFileSync(authFile, `${authFile}.bak-${stamp}`);
+  backup(authFile);
+  let auth = {};
+  try {
+    const parsed = JSON.parse(fs.readFileSync(authFile, 'utf8'));
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) auth = parsed;
+  } catch {
+    /* 文件不存在或损坏则从空对象开始 */
   }
-  writeFileAtomic(authFile, JSON.stringify({ OPENAI_API_KEY: provider.apiKey || '' }, null, 2) + '\n');
+  auth.OPENAI_API_KEY = provider.apiKey || '';
+  writeFileAtomic(authFile, JSON.stringify(auth, null, 2) + '\n');
 }
 
 function applyGemini(provider, modelId) {

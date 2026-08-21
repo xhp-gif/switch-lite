@@ -22,6 +22,19 @@ export function anthropicToOpenAI(body, targetModel = '') {
   // 而 K3 / DeepSeek-R1 / GLM 思考模型等只接受默认值（≠1 直接 400 invalid temperature），
   // 转发会导致分类器 sideQuery 必挂，界面表现为“分类器错误”；采样参数对编码 Agent 影响可忽略。
 
+  // tool_choice 映射：Anthropic {auto|any|tool} → OpenAI 'auto'|'required'|指定函数。
+  // 丢弃会让强制工具调用（Claude Code sidechain 有时用）退化为自由选择。
+  if (body.tool_choice && Array.isArray(body.tools) && body.tools.length) {
+    const tc = body.tool_choice;
+    if (tc.type === 'auto') out.tool_choice = 'auto';
+    else if (tc.type === 'any') out.tool_choice = 'required';
+    else if (tc.type === 'tool' && tc.name) out.tool_choice = { type: 'function', function: { name: tc.name } };
+  }
+  if (Array.isArray(body.stop_sequences)) {
+    const stops = body.stop_sequences.filter((s) => typeof s === 'string' && s).slice(0, 4); // OpenAI 上限 4 个
+    if (stops.length) out.stop = stops;
+  }
+
   // Claude Code 的 auto 模式分类器等辅助调用 max_tokens 很小（≤2048），思考型模型（K3 等）
   // 会把预算耗在 reasoning 上：content 为空或耗时撞超时，界面报“分类器不可用”。
   // 小预算请求注入关思考参数（OpenAI 风格 reasoning_effort + Anthropic 风格 thinking，双保险），
@@ -66,6 +79,7 @@ export function anthropicToOpenAI(body, targetModel = '') {
       // 复合内容处理（文本、工具调用、工具返回结果、图片等）
       let textParts = [];
       let toolCalls = [];
+      let imageParts = []; // 有图片的消息转成多部分 content，保持 原始块顺序
 
       for (const block of msg.content) {
         if (!block || typeof block !== 'object') continue;
@@ -98,17 +112,12 @@ export function anthropicToOpenAI(body, targetModel = '') {
             content: contentStr,
           });
         } else if (block.type === 'image') {
-          // 图片转为 OpenAI image_url 格式
+          // 图片转 OpenAI image_url；与文本合成同一条消息（顺序保留），不拆成多条
           const mediaType = block.source?.media_type || 'image/jpeg';
           const data = block.source?.data || '';
-          out.messages.push({
-            role,
-            content: [
-              {
-                type: 'image_url',
-                image_url: { url: `data:${mediaType};base64,${data}` },
-              },
-            ],
+          imageParts.push({
+            type: 'image_url',
+            image_url: { url: `data:${mediaType};base64,${data}` },
           });
         }
       }
@@ -119,6 +128,20 @@ export function anthropicToOpenAI(body, targetModel = '') {
           content: textParts.join('\n') || null,
           tool_calls: toolCalls,
         });
+      } else if (imageParts.length > 0) {
+        // 多模态消息：按原始块顺序重放 text/image（text-text-image 与 text-image-text 顺序不同）
+        const content = [];
+        for (const block of msg.content) {
+          if (!block || typeof block !== 'object') continue;
+          if (block.type === 'text' && block.text) content.push({ type: 'text', text: block.text });
+          else if (block.type === 'image') {
+            content.push({
+              type: 'image_url',
+              image_url: { url: `data:${block.source?.media_type || 'image/jpeg'};base64,${block.source?.data || ''}` },
+            });
+          }
+        }
+        out.messages.push({ role, content });
       } else if (textParts.length > 0) {
         out.messages.push({ role, content: textParts.join('\n') });
       }
@@ -208,6 +231,9 @@ export function createOpenAIToAnthropicStreamTransformer(res, reqModel = '') {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let buffer = '';
+  let pendingStopReason = null; // finish_reason 只记录，流真正结束时才发 message_delta：
+  // 部分供应商（DeepSeek/千帆等）把 usage 放在 finish_reason 之后的独立 chunk 里，
+  // 提前收流会把这些计量吞掉，看板 input 全变 0。
 
   function sendEvent(eventType, eventData) {
     res.write(`event: ${eventType}\ndata: ${JSON.stringify(eventData)}\n\n`);
@@ -242,7 +268,7 @@ export function createOpenAIToAnthropicStreamTransformer(res, reqModel = '') {
       if (!line || !line.startsWith('data:')) continue;
       const dataStr = line.slice(5).trim();
       if (dataStr === '[DONE]') {
-        finishStream('end_turn');
+        finishStream(pendingStopReason || 'end_turn');
         return;
       }
 
@@ -345,11 +371,9 @@ export function createOpenAIToAnthropicStreamTransformer(res, reqModel = '') {
         }
       }
 
-      // 4. 处理结束原因
+      // 4. 处理结束原因：只记录，等 [DONE]/流结束再收流（迟到 usage chunk 仍能计入）
       if (choice.finish_reason) {
-        const reason = choice.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn';
-        finishStream(reason);
-        return;
+        pendingStopReason = choice.finish_reason === 'tool_calls' ? 'tool_use' : 'end_turn';
       }
     }
   }
@@ -383,6 +407,9 @@ export function createOpenAIToAnthropicStreamTransformer(res, reqModel = '') {
         stop_sequence: null,
       },
       usage: {
+        // input_tokens 必须带上：Claude Code（2.1.x auto 模式分类器等）会直接读
+        // message.usage.input_tokens，缺失时抛 "undefined is not an object" 并熔断分类器
+        input_tokens: totalInputTokens,
         output_tokens: totalOutputTokens || 20,
       },
     });
@@ -404,7 +431,7 @@ export function createOpenAIToAnthropicStreamTransformer(res, reqModel = '') {
     end() {
       if (buffer.trim()) handleOpenAIChunk(buffer);
       if (!sentStart) ensureMessageStart(reqModel);
-      finishStream('end_turn');
+      finishStream(pendingStopReason || 'end_turn');
       res.end();
     },
   };

@@ -83,7 +83,7 @@ test('API 全链路：供应商 CRUD -> 获取模型 -> 应用配置', async (t)
   assert.ok(toml.includes('model_catalog_json'));
   assert.ok(toml.includes('personality = "test"'), '原有顶层键应保留');
   assert.ok(toml.includes('[custom_section]'), '原有配置段应保留');
-  assert.ok(!toml.includes('mcp_servers'), '第三方网关兼容：应剥离 MCP 服务器段（其 namespace 工具会被网关拒绝）');
+  assert.ok(toml.includes('[mcp_servers.node_repl]'), '用户配置的 MCP 服务器段应保留（网关兼容由中继网络层剥离工具处理，不再删配置）');
   assert.ok(toml.indexOf('model =') < toml.indexOf('[custom_section]'), 'model 顶层键应位于所有表格之前');
   assert.ok(toml.indexOf('model_provider =') < toml.indexOf('[custom_section]'), 'model_provider 顶层键应位于所有表格之前');
   assert.ok(toml.indexOf('model_catalog_json =') < toml.indexOf('[custom_section]'), 'model_catalog_json 顶层键应位于所有表格之前');
@@ -246,6 +246,25 @@ test('API 全链路：供应商 CRUD -> 获取模型 -> 应用配置', async (t)
   assert.equal(relayRes.ok, true);
   assert.equal(typeof relayRes.running, 'boolean');
   assert.equal(relayRes.port, 4180);
+
+  // 7.5 Gemini CLI：gemini 协议供应商写入 ~/.gemini/settings.json（走中继 + key 注入）
+  const geminiProviderRes = await post('/api/providers', {
+    name: 'Mock Gemini',
+    presetId: 'gemini',
+    target: 'gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta',
+    apiKey: 'AIza-test',
+    protocol: 'gemini',
+    wireApi: 'chat',
+  });
+  assert.equal(geminiProviderRes.status, 201);
+  const geminiProvider = await geminiProviderRes.json();
+  const geminiApply = await post('/api/config/apply', { providerId: geminiProvider.id, target: 'gemini', modelId: 'gemini-3-pro' });
+  assert.equal(geminiApply.status, 200, 'gemini 应恢复为可用目标（之前 targets() 里丢失）');
+  const geminiSettings = JSON.parse(fs.readFileSync(path.join(tmp, '.gemini', 'settings.json'), 'utf8'));
+  assert.equal(geminiSettings.model, 'gemini-3-pro');
+  assert.equal(geminiSettings.env.GEMINI_API_KEY, 'AIza-test');
+  assert.ok(String(geminiSettings.env.GOOGLE_GEMINI_BASE_URL).includes('/p/'), 'Gemini 应经本地中继转发');
 
   // 8. 删除
   const del = await fetch(`${base}/api/providers/${created.id}`, { method: 'DELETE' });
