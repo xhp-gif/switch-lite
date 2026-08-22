@@ -25,7 +25,7 @@ export function targets() {
     hermes: { label: 'Hermes Agent', file: hermesConfigPath() },
     cursor: { label: 'Cursor', file: cursorFile },
     grok: { label: 'Grok CLI', file: path.join(home, '.grok', 'config.json') },
-    deepseek_harness: { label: 'DeepSeek Harness', file: path.join(home, '.deepseek', 'harness.json') },
+    deepseek_harness: { label: 'DeepSeek Harness', file: path.join(home, '.dsh', 'settings.yaml') },
     tare: { label: 'Tare CLI', file: path.join(home, '.tare', 'config.json') },
     qcoder: { label: 'QCoder', file: path.join(home, '.qcoder', 'settings.json') },
     zcode: { label: 'ZCode', file: path.join(home, '.zcode', 'config.json') },
@@ -35,9 +35,17 @@ export function targets() {
     const custom = getCustomAgents();
     for (const c of custom) {
       if (c && c.id && c.configFile) {
+        let resolved = c.configFile.trim();
+        if (resolved.startsWith('~')) {
+          resolved = path.join(home, resolved.slice(1).replace(/^[/\\]/, ''));
+        } else if (resolved.includes('%')) {
+          resolved = resolved.replace(/%([^%]+)%/g, (_, name) => process.env[name] || '');
+        } else {
+          resolved = path.resolve(resolved);
+        }
         baseTargets[c.id] = {
           label: c.name || c.id,
-          file: c.configFile.startsWith('~') ? path.join(home, c.configFile.slice(1)) : path.resolve(c.configFile),
+          file: resolved,
           custom: true,
           format: c.format || 'json',
         };
@@ -74,9 +82,20 @@ function pruneBackups(file) {
 
 function writeFileAtomic(file, content) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}`;
-  fs.writeFileSync(tmp, content, 'utf8');
-  fs.renameSync(tmp, file); // Windows 上 rename 会覆盖目标，无需先删（先删反而有丢文件窗口）
+  const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    fs.writeFileSync(tmp, content, 'utf8');
+    fs.renameSync(tmp, file);
+  } catch (err) {
+    if (process.platform === 'win32') {
+      try {
+        fs.writeFileSync(file, content, 'utf8');
+        try { fs.unlinkSync(tmp); } catch {}
+        return;
+      } catch {}
+    }
+    throw err;
+  }
 }
 
 export function configStatus() {
@@ -450,6 +469,14 @@ function touchedFiles(target) {
       path.join(liteHome(), 'relay.json'),
     ];
   }
+  if (target === 'deepseek_harness') {
+    return [
+      t.file,
+      path.join(home, '.dsh', 'settings.yaml'),
+      path.join(home, '.dsh', '.credentials.yaml'),
+      path.join(home, '.deepseek', 'harness.json'),
+    ];
+  }
   return [t.file];
 }
 
@@ -499,15 +526,157 @@ export function applyGrok(provider, modelId) {
   writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
 }
 
+async function tryDshRpc(provider, modelId) {
+  if (process.env.CCS_HOME_OVERRIDE || process.env.NODE_ENV === 'test') {
+    return;
+  }
+  const directApiKey = provider.apiKey || '';
+  const relayBaseUrl = provider.id ? relayProviderUrl(provider.id) : (provider.baseUrl || '');
+  const ports = [3080, 52331];
+
+  for (const port of ports) {
+    const credsUrl = `http://127.0.0.1:${port}/api/credentials.set`;
+    const settingsUrl = `http://127.0.0.1:${port}/api/settings.update`;
+
+    const credsPayload1 = {
+      type: 'client-request',
+      rpcId: `switchlite-creds-ds-${Date.now()}`,
+      method: 'credentials.set',
+      payload: {
+        ref: 'DEEPSEEK_API_KEY',
+        value: directApiKey,
+      },
+    };
+    const credsPayload2 = {
+      type: 'client-request',
+      rpcId: `switchlite-creds-oa-${Date.now()}`,
+      method: 'credentials.set',
+      payload: {
+        ref: 'OPENAI_API_KEY',
+        value: directApiKey,
+      },
+    };
+    const settingsPayload = {
+      type: 'client-request',
+      rpcId: `switchlite-settings-${Date.now()}`,
+      method: 'settings.update',
+      payload: {
+        ns: 'agent-default-model',
+        patch: {
+          model: modelId,
+        },
+      },
+    };
+
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 600);
+      await Promise.all([
+        fetch(credsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(credsPayload1),
+          signal: controller.signal,
+        }).catch(() => null),
+        fetch(credsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(credsPayload2),
+          signal: controller.signal,
+        }).catch(() => null),
+        fetch(settingsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(settingsPayload),
+          signal: controller.signal,
+        }).catch(() => null),
+        fetch(settingsUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: 'client-request',
+            rpcId: `switchlite-llm-ds-${Date.now()}`,
+            method: 'settings.update',
+            payload: {
+              ns: 'llm-deepseek',
+              patch: {
+                baseURL: relayBaseUrl,
+              },
+            },
+          }),
+          signal: controller.signal,
+        }).catch(() => null),
+      ]);
+      clearTimeout(timer);
+    } catch {
+      /* 静默重试其他端口 */
+    }
+  }
+}
+
 export function applyDeepSeekHarness(provider, modelId) {
-  const file = targets().deepseek_harness.file;
-  const current = readJson(file);
-  current.base_url = relayProviderUrl(provider.id);
-  current.api_key = provider.apiKey || 'sk-switchlite';
-  current.model = modelId;
-  current.provider_name = provider.name;
-  current.updated_at = new Date().toISOString();
-  writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+  const home = homeDir();
+  const dshDir = path.join(home, '.dsh');
+  const dshSettingsFile = path.join(dshDir, 'settings.yaml');
+  const dshCredentialsFile = path.join(dshDir, '.credentials.yaml');
+  const legacyHarnessFile = path.join(home, '.deepseek', 'harness.json');
+
+  fs.mkdirSync(dshDir, { recursive: true });
+
+  const relayBaseUrl = provider.id ? relayProviderUrl(provider.id) : (provider.baseUrl || '');
+  const directBaseUrl = provider.baseUrl || '';
+  const directApiKey = provider.apiKey || '';
+
+  // 2. 写入 ~/.dsh/settings.yaml (包含 dsh 的 agent-default-model 及 llm-deepseek 命名空间)
+  const settingsLines = [
+    `# DeepSeek Harness Settings (Generated by SwitchLite)`,
+    `# Auto-generated at ${new Date().toISOString()}`,
+    `agent-default-model:`,
+    `  model: "${modelId}"`,
+    `llm-deepseek:`,
+    `  baseURL: "${relayBaseUrl}"`,
+    `llm:`,
+    `  baseUrl: "${relayBaseUrl}"`,
+    `  base_url: "${relayBaseUrl}"`,
+    `  model: "${modelId}"`,
+    `baseUrl: "${relayBaseUrl}"`,
+    `base_url: "${relayBaseUrl}"`,
+    `defaultModel: "${modelId}"`,
+    `model: "${modelId}"`,
+    `provider: "${provider.name || 'deepseek'}"`,
+    `updated_at: "${new Date().toISOString()}"`,
+  ];
+  writeFileAtomic(dshSettingsFile, settingsLines.join('\n') + '\n');
+
+  // 3. 写入 ~/.dsh/.credentials.yaml (遵循 dsh-credentials-local version: 1 标准)
+  const credsLines = [
+    `# DeepSeek Harness Credentials (Generated by SwitchLite)`,
+    `version: 1`,
+    `refs:`,
+    `  DEEPSEEK_API_KEY: "${directApiKey}"`,
+    `  OPENAI_API_KEY: "${directApiKey}"`,
+    `  ANTHROPIC_API_KEY: "${directApiKey}"`,
+    `  API_KEY: "${directApiKey}"`,
+    `  QIANFAN_API_KEY: "${directApiKey}"`,
+  ];
+  writeFileAtomic(dshCredentialsFile, credsLines.join('\n') + '\n');
+
+  // 4. 兼容写入旧版 ~/.deepseek/harness.json
+  try {
+    fs.mkdirSync(path.dirname(legacyHarnessFile), { recursive: true });
+    const current = readJson(legacyHarnessFile);
+    current.base_url = directBaseUrl;
+    current.api_key = directApiKey;
+    current.model = modelId;
+    current.provider_name = provider.name;
+    current.updated_at = new Date().toISOString();
+    writeFileAtomic(legacyHarnessFile, JSON.stringify(current, null, 2) + '\n');
+  } catch {
+    /* 兼容写入静默 */
+  }
+
+  // 5. 若 dsh 正在后台运行，尝试通过 RPC 立即通知热生效
+  tryDshRpc(provider, modelId).catch(() => {});
 }
 
 export function applyTare(provider, modelId) {
@@ -545,21 +714,57 @@ export function applyCustomAgent(customTarget, provider, modelId) {
   if (!t || !t.file) return;
   const file = t.file;
   const format = t.format || 'json';
+  const relayUrl = relayProviderUrl(provider.id);
+  const key = provider.apiKey || 'sk-switchlite';
+
   if (format === 'json') {
     const current = readJson(file);
-    current.baseUrl = relayProviderUrl(provider.id);
-    current.base_url = relayProviderUrl(provider.id);
-    current.apiKey = provider.apiKey || 'sk-switchlite';
-    current.api_key = provider.apiKey || 'sk-switchlite';
+    // 兼顾各种客户端命名风格 (camelCase / snake_case / nesting)
+    current.baseUrl = relayUrl;
+    current.base_url = relayUrl;
+    current.apiBase = relayUrl;
+    current.openaiBaseUrl = relayUrl;
+    current.apiKey = key;
+    current.api_key = key;
+    current.openaiApiKey = key;
     current.model = modelId;
     current.modelId = modelId;
+    current.model_name = modelId;
+    current.provider = provider.name;
+    current.updatedAt = new Date().toISOString();
     writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
-  } else {
+  } else if (format === 'yaml') {
     const lines = [
       `# SwitchLite Generated Config for ${t.label}`,
-      `base_url = "${relayProviderUrl(provider.id)}"`,
-      `api_key = "${provider.apiKey || 'sk-switchlite'}"`,
+      `# Auto-generated at ${new Date().toISOString()}`,
+      `base_url: "${relayUrl}"`,
+      `api_key: "${key}"`,
+      `model: "${modelId}"`,
+      `provider: "${provider.name}"`,
+      `openai-api-base: "${relayUrl}"`,
+      `openai-api-key: "${key}"`,
+      `updated_at: "${new Date().toISOString()}"`,
+    ];
+    writeFileAtomic(file, lines.join('\n') + '\n');
+  } else if (format === 'env') {
+    const lines = [
+      `# SwitchLite Generated Environment Variables for ${t.label}`,
+      `OPENAI_BASE_URL="${relayUrl}"`,
+      `OPENAI_API_KEY="${key}"`,
+      `ANTHROPIC_BASE_URL="${relayUrl}"`,
+      `ANTHROPIC_AUTH_TOKEN="${key}"`,
+      `MODEL="${modelId}"`,
+      `UPDATED_AT="${new Date().toISOString()}"`,
+    ];
+    writeFileAtomic(file, lines.join('\n') + '\n');
+  } else {
+    // toml
+    const lines = [
+      `# SwitchLite Generated Config for ${t.label}`,
+      `base_url = "${relayUrl}"`,
+      `api_key = "${key}"`,
       `model = "${modelId}"`,
+      `provider = "${provider.name}"`,
       `updated_at = "${new Date().toISOString()}"`,
     ];
     writeFileAtomic(file, lines.join('\n') + '\n');

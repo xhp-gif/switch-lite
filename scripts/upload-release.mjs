@@ -42,32 +42,18 @@ async function run() {
       name: `SwitchLite v${version}`,
       body: `### SwitchLite v${version} 更新日志
 
-#### 分类器修复（Claude Code auto 模式）
-- 精准识别 auto 模式安全分类器 sidechain 请求，本地秒回 \`<block>no</block>\`，与模型/供应商无关——换 DeepSeek / Kimi / GLM 等任意模型都不再报 "Wait a moment and then try this action again"；
-- 修复中继转译流的 \`message_delta.usage\` 缺 \`input_tokens\` 导致 Claude Code 内部崩溃、分类器整会话熔断的问题；
-- 识别只看系统提示词，不再扫描会话历史，彻底避免误劫持正常对话（v0.5.0 引入的回归）。
+#### 🤖 DeepSeek Harness (DSH) 官方生态深度适配
+- **凭据热同步与规范写入**：遵循 DSH \`version: 1\` 标准规范写入 \`~/.dsh/.credentials.yaml\` 与 \`~/.dsh/settings.yaml\`，并提供运行时 RPC（\`/api/credentials.set\` 与 \`/api/settings.update\`）无缝热生效与实时落盘；
+- **原生文件夹选择器回退**：解除 Windows 下原生文件夹选择弹窗的静默隐藏限制，并自动提供 PowerShell 原生 \`FolderBrowserDialog\` 稳定回退，工作区选择更顺畅；
+- **全链路工具兼容与用量统计**：DSH 经 SwitchLite 转发后自动完成严格网关工具清洗与鉴权透传，支持深度思考流（Reasoning）、正文生成与 Token 精准统计。
 
-#### 中继健壮性与安全
-- 上游响应头超时 90s（\`CCS_RELAY_HEADER_TIMEOUT\` 可调）：挂死网关不再让请求无限悬挂，可正常触发故障转移；
-- 清理逐跳/编码头，修复 chunked 请求构造出非法上游请求、gzip 响应破坏协议转译的问题；
-- \`npm start\` 网页版改绑 \`127.0.0.1\`（管理 API 含 Key，不再暴露局域网）；
-- \`/models\` 只返回供应商真实模型，去掉硬编码 claude-*/glm-* 名单。
+#### 🎨 官方 Agent 库与交互体验升级
+- **大厂质感设计**：官方支持库重构为垂直卡片式下拉面板，去掉横向滚动条，单屏一览无余；
+- **官方高精度 SVG 图标库**：扩充包含 Cursor、Grok、Gemini、DeepSeek、Tare、QCoder、ZCode 等在内的全新高质感品牌矢量图标与品牌渐变背景；
+- **快速切换面板优化**：重构快速切换弹窗中的自定义 Select 选择器交互，操作触感与视觉层次更细腻。
 
-#### 协议适配器
-- finish_reason 后迟到的 usage chunk 不再丢失（用量看板 input 不再为 0）；
-- 图片与文本合成单条多部分消息并保留块顺序；\`tool_choice\` / \`stop_sequences\` 正确映射。
-
-#### Codex 配置保护
-- 切换供应商不再删除 \`[mcp_servers]\` 配置段；
-- \`auth.json\` 合并写入 \`OPENAI_API_KEY\`，保留 ChatGPT OAuth 登录态；
-- \`.bak\` 备份自动清理，每个文件只保留最近 5 份。
-
-#### Gemini 回归
-- 恢复 Gemini CLI 为可用目标（v0.4.8 起误丢），官方四角星渐变图标加入「官方支持库」按需启用。
-
-#### 其他
-- \`/api/health\` 版本号改读 package.json；\`PUT /api/settings/active\` 支持全部新 Agent 与自定义 Agent；
-- 会话日志回填只消费完整行，不再丢失正在写入的事件。`,
+#### 🛡️ Windows 原子写入稳定性增强
+- 优化 \`writeFileAtomic\` 在 Windows 环境下的文件锁重试与直接写入兜底机制，彻底解决并发监听和热更新时的 \`EPERM\` 冲突。`,
       draft: false,
       prerelease: false,
     };

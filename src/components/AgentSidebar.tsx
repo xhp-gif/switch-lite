@@ -55,8 +55,14 @@ export function AgentSidebar({
         {visibleAgents.map((a) => {
           const activeId = settings?.active?.[a.id];
           const activeProvider = providers.find((p) => p.id === activeId && p.target === a.id) || null;
-          const theme = AGENT_THEME[a.id] || { tile: '#f4f4f6', icon: '#6366f1', accent: '#6366f1' };
-          const isCustom = !BUILTIN_AGENTS.some((ba) => ba.id === a.id);
+          const isBuiltin = BUILTIN_AGENTS.some((ba) => ba.id === a.id);
+          const theme =
+            AGENT_THEME[a.id] ||
+            (a.icon && AGENT_THEME[a.icon]) || {
+              tile: 'var(--panel-soft)',
+              icon: 'var(--accent)',
+              accent: 'var(--accent)',
+            };
 
           return (
             <button
@@ -66,10 +72,10 @@ export function AgentSidebar({
               style={selected === a.id ? { '--agent-accent': theme.accent } as CSSProperties : undefined}
             >
               <span className="agent-tile" style={{ background: theme.tile }}>
-                {isCustom ? (
-                  <span className="custom-tile-glyph">{a.icon || '✦'}</span>
-                ) : (
+                {isBuiltin ? (
                   <AgentIcon id={a.id} size={26} />
+                ) : (
+                  <AgentIcon id={a.icon || a.id} fallbackGlyph={a.icon} size={26} />
                 )}
               </span>
               <span className="agent-info">

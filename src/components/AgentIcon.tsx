@@ -67,12 +67,69 @@ export const AGENT_THEME: Record<string, { tile: string; icon: string; accent: s
   zcode: { tile: '#eff6ff', icon: '#3859FF', accent: '#2563eb' }, // 智谱 Zhipu 官方深蓝
   opencode: { tile: '#0f172a', icon: '#ffffff', accent: '#0f172a' }, // OpenCode 官方纯黑
   hermes: { tile: '#ffffff', icon: '', accent: '#0071A9' },
+  // 新增热门 Agent 专属色彩方案
+  kiro: { tile: '#f5f3ff', icon: '#8b5cf6', accent: '#8b5cf6' },
+  aider: { tile: '#ecfdf5', icon: '#059669', accent: '#059669' },
+  continue: { tile: '#fdf2f8', icon: '#db2777', accent: '#db2777' },
+  cline: { tile: '#eff6ff', icon: '#2563eb', accent: '#2563eb' },
+  windsurf: { tile: '#f0fdfa', icon: '#0891b2', accent: '#0891b2' },
+  devin: { tile: '#f8fafc', icon: '#0f172a', accent: '#0f172a' },
 };
 
-export function AgentIcon({ id, size = 24, className }: Props) {
-  const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
+export const PRESET_ICONS = [
+  { id: 'kiro', label: 'Kiro 官方', category: 'agent' },
+  { id: 'aider', label: 'Aider 官方', category: 'agent' },
+  { id: 'continue', label: 'Continue 官方', category: 'agent' },
+  { id: 'cline', label: 'Cline 官方', category: 'agent' },
+  { id: 'windsurf', label: 'Windsurf 官方', category: 'agent' },
+  { id: 'devin', label: 'Devin 官方', category: 'agent' },
+  { id: 'codex', label: 'Codex 官方', category: 'agent' },
+  { id: 'claude', label: 'Claude 官方', category: 'agent' },
+  { id: 'cursor', label: 'Cursor 官方', category: 'agent' },
+  { id: 'deepseek_harness', label: 'DeepSeek', category: 'agent' },
+  { id: 'grok', label: 'Grok 官方', category: 'agent' },
+  { id: 'tare', label: 'Trae 官方', category: 'agent' },
+  { id: 'qcoder', label: 'Qwen 通义', category: 'agent' },
+  { id: 'zcode', label: 'Zhipu 智谱', category: 'agent' },
+  { id: 'opencode', label: 'OpenCode', category: 'agent' },
+  { id: 'gemini', label: 'Gemini 官方', category: 'agent' },
+  // 常用符号与 Emoji
+  { id: '✨', label: '星光 ✨', category: 'symbol' },
+  { id: '⚡', label: '闪电 ⚡', category: 'symbol' },
+  { id: '🤖', label: '机器人 🤖', category: 'symbol' },
+  { id: '✦', label: '四角星 ✦', category: 'symbol' },
+  { id: '⌘', label: '指令 ⌘', category: 'symbol' },
+  { id: '✧', label: '微光 ✧', category: 'symbol' },
+  { id: '✳', label: '八角星 ✳', category: 'symbol' },
+  { id: '𝕏', label: 'X 符号', category: 'symbol' },
+  { id: '🐳', label: '鲸鱼 🐳', category: 'symbol' },
+  { id: '⌬', label: '苯环 ⌬', category: 'symbol' },
+  { id: '🧠', label: '大脑 🧠', category: 'symbol' },
+  { id: '🚀', label: '火箭 🚀', category: 'symbol' },
+  { id: '💡', label: '灵感 💡', category: 'symbol' },
+  { id: '💻', label: '代码 💻', category: 'symbol' },
+  { id: '🌊', label: '海浪 🌊', category: 'symbol' },
+  { id: '🔮', label: '水晶球 🔮', category: 'symbol' },
+  { id: '🛠️', label: '工具 🛠️', category: 'symbol' },
+  { id: '🦉', label: '猫头鹰 🦉', category: 'symbol' },
+  { id: '💎', label: '钻石 💎', category: 'symbol' },
+];
 
-  if (id === 'hermes') {
+export function AgentIcon({
+  id,
+  fallbackGlyph,
+  size = 24,
+  className,
+}: {
+  id: Target;
+  fallbackGlyph?: string;
+  size?: number;
+  className?: string;
+}) {
+  const uid = useId().replace(/[^a-zA-Z0-9]/g, '');
+  const key = String(id).toLowerCase();
+
+  if (key === 'hermes') {
     return (
       <img
         src={hermesIcon}
@@ -87,7 +144,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 1. OpenAI 官方 Codex
-  if (id === 'codex') {
+  if (key === 'codex') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <defs>
@@ -104,7 +161,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 2. Anthropic 官方 Claude
-  if (id === 'claude') {
+  if (key === 'claude') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <path fill="#D97757" fillRule="evenodd" d={CLAUDE_PATH} />
@@ -113,7 +170,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 3. Cursor 官方 3D 立方切角 Logo
-  if (id === 'cursor') {
+  if (key === 'cursor') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <path fill="#ffffff" fillRule="evenodd" d={CURSOR_PATH} />
@@ -122,7 +179,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 4. DeepSeek 官方完整蓝鲸 Logo
-  if (id === 'deepseek_harness') {
+  if (key === 'deepseek_harness' || key === 'deepseek') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <path fill="#2563eb" fillRule="evenodd" d={DEEPSEEK_PATH} />
@@ -131,7 +188,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 5. xAI 官方 Grok Logo
-  if (id === 'grok') {
+  if (key === 'grok') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <path fill="#ffffff" fillRule="evenodd" d={GROK_PATH} />
@@ -140,7 +197,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 6. ByteDance Trae 官方 Pixel Pal 机器人眼睛 Logo
-  if (id === 'tare') {
+  if (key === 'tare' || key === 'trae') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <path fill="#00d664" fillRule="evenodd" d={TRAE_PATH} />
@@ -149,7 +206,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 7. QCoder / 通义千问 Qwen 官方螺线量子结 Logo
-  if (id === 'qcoder') {
+  if (key === 'qcoder' || key === 'qwen') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <defs>
@@ -164,7 +221,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 8. ZCode / 智谱 Zhipu AI 官方引力网络 Logo
-  if (id === 'zcode') {
+  if (key === 'zcode' || key === 'zhipu') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <path fill="#3859FF" fillRule="evenodd" d={ZHIPU_PATH} />
@@ -173,7 +230,7 @@ export function AgentIcon({ id, size = 24, className }: Props) {
   }
 
   // 9. OpenCode 官方开箱几何 Logo
-  if (id === 'opencode') {
+  if (key === 'opencode') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <path fill="#ffffff" fillRule="evenodd" d={OPENCODE_PATH} />
@@ -181,8 +238,8 @@ export function AgentIcon({ id, size = 24, className }: Props) {
     );
   }
 
-  // 10. Google 官方 Gemini 四角星 Spark Logo（蓝→紫→珊瑚红官方渐变）
-  if (id === 'gemini') {
+  // 10. Google 官方 Gemini 四角星 Spark Logo
+  if (key === 'gemini') {
     return (
       <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
         <defs>
@@ -203,7 +260,126 @@ export function AgentIcon({ id, size = 24, className }: Props) {
     );
   }
 
-  // 自定义 Agent 或兜底
+// 11. AWS Kiro 官方幽灵品牌 Logo (100% 官方标准矢量)
+const KIRO_GHOST_PATH =
+  'M4.594 6.677C6.67-2.226 18.746-2.211 21.16 6.632c.353 1.297 1.725 7.582-1.673 13.747-1.545 2.797-5.841 5.49-6.99 1.883C8.6 25.477 3.315 24.1 5.789 18.609l-.318.143c-3.57 1.305-3.863-1.208-3.173-2.513.45-.84.727-1.335.937-1.897.353-.975.458-1.568.593-2.498.27-1.837.277-3.607.765-5.167zm8.37.01a.92.92 0 00-.81.428c-.217.323-.33.825-.33 1.462 0 .705.15 1.89 1.14 1.89h.008c.757 0 1.214-.705 1.214-1.89 0-.622-.127-1.125-.367-1.455a1.014 1.014 0 00-.855-.435zm4.08 0a.92.92 0 00-.81.428c-.217.323-.33.825-.33 1.462 0 .705.15 1.89 1.14 1.89h.008c.757 0 1.215-.705 1.215-1.89 0-.622-.128-1.125-.368-1.455a1.014 1.014 0 00-.855-.435z';
+
+// 12. Cline 官方机器人 Logo (100% 官方标准矢量)
+const CLINE_HEAD =
+  'M17.035 3.991c2.75 0 4.98 2.24 4.98 5.003v1.667l1.45 2.896a1.01 1.01 0 01-.002.909l-1.448 2.864v1.668c0 2.762-2.23 5.002-4.98 5.002H7.074c-2.751 0-4.98-2.24-4.98-5.002V17.33l-1.48-2.855a1.01 1.01 0 01-.003-.927l1.482-2.887V8.994c0-2.763 2.23-5.003 4.98-5.003h9.962zM8.265 9.6a2.274 2.274 0 00-2.274 2.274v4.042a2.274 2.274 0 004.547 0v-4.042A2.274 2.274 0 008.265 9.6zm7.326 0a2.274 2.274 0 00-2.274 2.274v4.042a2.274 2.274 0 104.548 0v-4.042A2.274 2.274 0 0015.59 9.6z';
+const CLINE_ANTENNA = 'M12.054 5.558a2.779 2.779 0 100-5.558 2.779 2.779 0 000 5.558z';
+
+// 13. Codeium Windsurf 官方波浪 Logo (100% 官方标准矢量)
+const WINDSURF_PATH =
+  'M23.78 5.004h-.228a2.187 2.187 0 00-2.18 2.196v4.912c0 .98-.804 1.775-1.76 1.775a1.818 1.818 0 01-1.472-.773L13.168 5.95a2.197 2.197 0 00-1.81-.95c-1.134 0-2.154.972-2.154 2.173v4.94c0 .98-.797 1.775-1.76 1.775-.57 0-1.136-.289-1.472-.773L.408 5.098C.282 4.918 0 5.007 0 5.228v4.284c0 .216.066.426.188.604l5.475 7.889c.324.466.8.812 1.351.938 1.377.316 2.645-.754 2.645-2.117V11.89c0-.98.787-1.775 1.76-1.775h.002c.586 0 1.135.288 1.472.773l4.972 7.163a2.15 2.15 0 001.81.95c1.158 0 2.151-.973 2.151-2.173v-4.939c0-.98.787-1.775 1.76-1.775h.194c.122 0 .22-.1.22-.222V5.225a.221.221 0 00-.22-.222z';
+
+// 14. Cognition Devin 官方等距立体矩阵 Logo (100% 官方标准矢量)
+const DEVIN_P1 =
+  'M2.033 9.867l2.554 1.483a.589.589 0 00.592 0l2.554-1.483.01-.008a.608.608 0 00.11-.084l.013-.015a.631.631 0 00.076-.1c.003-.005.008-.01.01-.016a.558.558 0 00.052-.125l.007-.028a.611.611 0 00.019-.14V7.868c0-.572.307-1.105.8-1.392a1.595 1.595 0 011.598 0l1.277.742a.54.54 0 00.129.053l.028.01c.044.01.088.015.133.016h.006l.013-.002a.587.587 0 00.27-.074l.011-.004 2.554-1.483a.596.596 0 00.297-.516V2.253a.595.595 0 00-.297-.516L12.293.257a.587.587 0 00-.591 0L9.148 1.737l-.01.01a.609.609 0 00-.109.083l-.014.015a.632.632 0 00-.076.1c-.003.005-.008.01-.01.016a.57.57 0 00-.052.124l-.007.028a.612.612 0 00-.018.14v1.483c0 .572-.307 1.105-.8 1.393a1.597 1.597 0 01-1.599 0l-1.276-.742a.603.603 0 00-.13-.053l-.028-.008a.658.658 0 00-.133-.018h-.02a.57.57 0 00-.269.074c-.003.002-.008.002-.012.005L2.033 5.872a.596.596 0 00-.297.515v2.966c0 .213.113.41.297.515z';
+const DEVIN_P2 =
+  'M15.943 10.607a1.596 1.596 0 011.599 0l1.276.74c.041.025.085.04.13.055l.028.008c.043.01.088.016.133.018h.005c.005 0 .01-.002.014-.003a.474.474 0 00.122-.016l.021-.005a.616.616 0 00.126-.052c.004-.002.009-.002.013-.005l2.554-1.482a.597.597 0 00.297-.516V6.383a.596.596 0 00-.297-.515l-2.552-1.483a.587.587 0 00-.592 0l-2.553 1.482-.011.008a.61.61 0 00-.108.084l-.014.016a.637.637 0 00-.076.1c-.003.005-.008.01-.01.016a.57.57 0 00-.052.124l-.007.029a.612.612 0 00-.018.14v1.482c0 .572-.307 1.105-.8 1.393a1.597 1.597 0 01-1.599 0l-1.276-.742a.584.584 0 00-.13-.053l-.028-.008a.62.62 0 00-.133-.018h-.02a.587.587 0 00-.269.074l-.012.004L9.15 10a.596.596 0 00-.296.516v2.966c0 .212.112.409.296.515l2.554 1.483s.008.002.012.005c.04.022.082.04.126.052l.02.004a.57.57 0 00.123.017l.014.002h.006c.054 0 .108-.01.16-.025a.587.587 0 00.13-.054l1.277-.741a1.597 1.597 0 012.398 1.392v1.482c0 .049.007.095.019.14l.007.028a.619.619 0 00.051.125c.004.006.008.01.01.016a.6.6 0 00.076.1l.014.015c.033.032.069.06.108.084.004.002.006.006.011.008l2.554 1.483a.59.59 0 00.593 0l2.554-1.483a.597.597 0 00.296-.516v-2.965a.595.595 0 00-.296-.516l-2.554-1.483s-.008-.002-.012-.005a.54.54 0 00-.126-.051c-.007-.003-.013-.003-.02-.005a.635.635 0 00-.125-.017h-.018a.557.557 0 00-.16.026.588.588 0 00-.13.053l-1.276.742a1.595 1.595 0 01-1.598 0 1.615 1.615 0 010-2.785l-.005-.001z';
+const DEVIN_P3 =
+  'M14.848 18.265l-2.554-1.482-.012-.005a.526.526 0 00-.126-.052c-.007-.002-.014-.002-.02-.005a.64.64 0 00-.124-.017h-.02a.56.56 0 00-.16.026.588.588 0 00-.13.053l-1.276.742a1.594 1.594 0 01-1.598 0c-.493-.286-.8-.82-.8-1.393V14.65a.563.563 0 00-.018-.14l-.008-.028a.604.604 0 00-.051-.124l-.01-.017a.603.603 0 00-.076-.1l-.014-.015a.596.596 0 00-.109-.084c-.003-.002-.005-.006-.01-.008L5.178 12.65a.587.587 0 00-.591 0l-2.554 1.483a.596.596 0 00-.297.516v2.965c0 .213.113.41.297.515l2.554 1.483.012.004a.618.618 0 00.267.074l.016.002h.007a.55.55 0 00.16-.026.584.584 0 00.129-.053l1.277-.742a1.597 1.597 0 012.398 1.393v1.482c0 .05.007.095.019.14l.007.028c.013.044.03.085.051.125l.01.016c.022.036.047.07.076.1l.014.015c.032.032.069.06.109.084l.01.008 2.554 1.483a.587.587 0 00.593 0l2.554-1.483a.596.596 0 00.296-.515v-2.966a.596.596 0 00-.296-.516h-.002z';
+
+  // 11. Kiro 官方幽灵品牌 Logo
+  if (key === 'kiro' || key.includes('kiro')) {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
+        <defs>
+          <linearGradient id={`kiro-${uid}`} x1="4" y1="2" x2="20" y2="22" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#9333EA" />
+            <stop offset="1" stopColor="#6366F1" />
+          </linearGradient>
+        </defs>
+        <path fill={`url(#kiro-${uid})`} fillRule="evenodd" d={KIRO_GHOST_PATH} />
+      </svg>
+    );
+  }
+
+  // 12. Aider 官方闪电/极速终端标志
+  if (key === 'aider' || key.includes('aider')) {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
+        <defs>
+          <linearGradient id={`aider-${uid}`} x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#10B981" />
+            <stop offset="1" stopColor="#059669" />
+          </linearGradient>
+        </defs>
+        <rect x="2" y="2" width="20" height="20" rx="5" fill={`url(#aider-${uid})`} />
+        <path d="M13.5 4.5L6.5 13.5h5l-1 6 7-9h-5l1-6z" fill="#ffffff" />
+      </svg>
+    );
+  }
+
+  // 13. Continue 官方快进双箭头标志
+  if (key === 'continue' || key.includes('continue')) {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
+        <defs>
+          <linearGradient id={`continue-${uid}`} x1="2" y1="2" x2="22" y2="22" gradientUnits="userSpaceOnUse">
+            <stop stopColor="#E11D48" />
+            <stop offset="1" stopColor="#BE123C" />
+          </linearGradient>
+        </defs>
+        <rect x="2" y="2" width="20" height="20" rx="5" fill={`url(#continue-${uid})`} />
+        <path d="M6 7l5.5 5-5.5 5V7zm6.5 0l5.5 5-5.5 5V7z" fill="#ffffff" />
+      </svg>
+    );
+  }
+
+  // 14. Cline 官方机器人 Logo
+  if (key === 'cline' || key.includes('cline') || key === 'roo_code') {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
+        <path fill="#2563EB" fillRule="evenodd" d={CLINE_HEAD} />
+        <path fill="#2563EB" d={CLINE_ANTENNA} />
+      </svg>
+    );
+  }
+
+  // 15. Codeium Windsurf 官方波浪 Logo
+  if (key === 'windsurf' || key.includes('windsurf')) {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
+        <path fill="#06B6D4" fillRule="evenodd" clipRule="evenodd" d={WINDSURF_PATH} />
+      </svg>
+    );
+  }
+
+  // 16. Cognition Devin 官方等距立体矩阵 Logo
+  if (key === 'devin' || key.includes('devin')) {
+    return (
+      <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
+        <path fill="#00DC82" fillRule="evenodd" d={DEVIN_P1} />
+        <path fill="#00DC82" fillRule="evenodd" d={DEVIN_P2} />
+        <path fill="#00DC82" fillRule="evenodd" d={DEVIN_P3} />
+      </svg>
+    );
+  }
+
+  // 自定义 Glyph (Emoji / 文字 / 符号)
+  const glyph = fallbackGlyph || String(id);
+  if (glyph && glyph.length <= 4) {
+    return (
+      <span
+        className={className}
+        style={{
+          fontSize: glyph.length > 2 ? size * 0.55 : size * 0.7,
+          lineHeight: 1,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          fontWeight: 700,
+          userSelect: 'none',
+        }}
+      >
+        {glyph}
+      </span>
+    );
+  }
+
+  // 默认兜底圆形首字母徽标
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} className={className} aria-hidden="true">
       <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.4" />
@@ -213,3 +389,4 @@ export function AgentIcon({ id, size = 24, className }: Props) {
     </svg>
   );
 }
+

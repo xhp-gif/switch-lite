@@ -246,6 +246,13 @@ export default function App() {
     }
   };
 
+  const isBuiltin = BUILTIN_AGENTS.some((ba) => ba.id === agent);
+  const headTheme =
+    AGENT_THEME[agent] ||
+    (currentAgent.icon && AGENT_THEME[currentAgent.icon]) || {
+      tile: 'var(--panel-soft)',
+    };
+
   return (
     <div className="app">
       <header className="topbar">
@@ -255,7 +262,11 @@ export default function App() {
         </div>
         <div className="topbar-right">
           <span className="topbar-agent">
-            <AgentIcon id={agent} size={17} />
+            {isBuiltin ? (
+              <AgentIcon id={agent} size={17} />
+            ) : (
+              <AgentIcon id={currentAgent.icon || agent} fallbackGlyph={currentAgent.icon} size={17} />
+            )}
             <span>{currentAgent.name}</span>
           </span>
           <span className="hint">选择 Agent → 填 Base URL 和 API Key → 自动获取模型 → 一键接入</span>
@@ -276,11 +287,12 @@ export default function App() {
         <main className="main" key={agent}>
           <section className="agent-head">
             <div className="agent-head-main">
-              <span
-                className="agent-head-icon"
-                style={{ background: (AGENT_THEME[agent] || { tile: '#f4f4f6' }).tile }}
-              >
-                <AgentIcon id={agent} size={32} />
+              <span className="agent-head-icon" style={{ background: headTheme.tile }}>
+                {isBuiltin ? (
+                  <AgentIcon id={agent} size={32} />
+                ) : (
+                  <AgentIcon id={currentAgent.icon || agent} fallbackGlyph={currentAgent.icon} size={32} />
+                )}
               </span>
               <div>
                 <h1>{currentAgent.name}</h1>
