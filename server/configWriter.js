@@ -503,6 +503,102 @@ function restoreSnapshots(snaps) {
   }
 }
 
+let DatabaseSync = null;
+try {
+  const mod = await import('node:sqlite');
+  DatabaseSync = mod.DatabaseSync;
+} catch {}
+
+function syncCursorStateDb(provider, modelId) {
+  if (!DatabaseSync || process.env.NODE_ENV === 'test' || process.env.CCS_HOME_OVERRIDE) return;
+  try {
+    const home = homeDir();
+    let dbPath = null;
+    if (process.platform === 'win32') {
+      const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+      dbPath = path.join(appData, 'Cursor', 'User', 'globalStorage', 'state.vscdb');
+    } else if (process.platform === 'darwin') {
+      dbPath = path.join(home, 'Library', 'Application Support', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
+    } else {
+      dbPath = path.join(home, '.config', 'Cursor', 'User', 'globalStorage', 'state.vscdb');
+    }
+
+    if (!fs.existsSync(dbPath)) return;
+
+    const db = new DatabaseSync(dbPath);
+    const rowKey = 'src.vs.platform.reactivestorage.browser.reactiveStorageServiceImpl.persistentStorage.applicationUser';
+    const row = db.prepare('SELECT value FROM ItemTable WHERE key = ?').get(rowKey);
+    if (!row || !row.value) {
+      db.close();
+      return;
+    }
+
+    const data = JSON.parse(row.value);
+    const relayUrl = relayProviderUrl(provider.id);
+    data.openAIBaseUrl = relayUrl;
+
+    // 注入模型到 availableDefaultModels2
+    data.availableDefaultModels2 = data.availableDefaultModels2 || [];
+    const existing = data.availableDefaultModels2.find((m) => m && m.name === modelId);
+    if (!existing) {
+      data.availableDefaultModels2.push({
+        name: modelId,
+        defaultOn: true,
+        parameterDefinitions: [],
+        variants: [
+          {
+            parameterValues: [],
+            displayName: modelId,
+            isMaxMode: false,
+            isDefaultMaxConfig: true,
+            isDefaultNonMaxConfig: true,
+            displayNameOutsidePicker: modelId,
+            variantStringRepresentation: `${modelId}[]`,
+            legacySlug: modelId,
+          },
+        ],
+        legacySlugs: [],
+        idAliases: [],
+        cloudAgentEffortModes: [],
+        modelPickerBadges: [],
+        supportsAgent: true,
+        degradationStatus: 0,
+        supportsThinking: true,
+        supportsImages: true,
+        supportsMaxMode: true,
+        contextTokenLimit: 128000,
+        contextTokenLimitForMaxMode: 128000,
+        clientDisplayName: modelId,
+        serverModelName: modelId,
+        supportsNonMaxMode: true,
+        isRecommendedForBackgroundComposer: false,
+        supportsPlanMode: true,
+        inputboxShortModelName: modelId,
+        supportsSandboxing: true,
+        namedModelSectionIndex: 1,
+        vendorName: 'custom',
+        vendor: { id: 99, displayName: 'Custom' },
+      });
+    }
+
+    // 启用该模型
+    data.aiSettings = data.aiSettings || {};
+    const enabledSet = new Set(data.aiSettings.modelOverrideEnabled || []);
+    enabledSet.add(modelId);
+    data.aiSettings.modelOverrideEnabled = Array.from(enabledSet);
+
+    if (data.featureModelConfigs) {
+      if (data.featureModelConfigs.composer) data.featureModelConfigs.composer.defaultModel = modelId;
+      if (data.featureModelConfigs.cmdK) data.featureModelConfigs.cmdK.defaultModel = modelId;
+    }
+
+    db.prepare('UPDATE ItemTable SET value = ? WHERE key = ?').run(JSON.stringify(data), rowKey);
+    db.close();
+  } catch {
+    /* 数据库被独占锁定时静默跳过 */
+  }
+}
+
 export function applyCursor(provider, modelId) {
   const file = targets().cursor.file;
   const current = readJson(file);
@@ -514,6 +610,7 @@ export function applyCursor(provider, modelId) {
   current['openai.apiKey'] = provider.apiKey || 'sk-switchlite';
   current['openai.model'] = modelId;
   writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
+  syncCursorStateDb(provider, modelId);
 }
 
 export function applyGrok(provider, modelId) {

@@ -42,18 +42,20 @@ async function run() {
       name: `SwitchLite v${version}`,
       body: `### SwitchLite v${version} 更新日志
 
+#### ⚡ Cursor 内部状态库深度适配（免手动添加模型）
+- **自动同步 Cursor 专属状态库 (\`state.vscdb\`)**：使用 Node.js 原生 SQLite 引擎，跨平台（Windows / macOS / Linux）自动定位并更新 Cursor 专属存储；
+- **自定义模型自动注入与激活**：一键将选择的供应商模型结构注入至 \`availableDefaultModels2\`，并自动加入 \`aiSettings.modelOverrideEnabled\` 激活列表；
+- **自动设为 Composer / Cmd+K 默认模型**：自动同步更新 \`featureModelConfigs\`，无需在 Cursor 设置中每次手动输入添加模型；
+- **双通道安全机制**：同步更新 \`settings.json\` 与 \`state.vscdb\`，独占锁定时静默降级保护。
+
 #### 🤖 DeepSeek Harness (DSH) 官方生态深度适配
 - **凭据热同步与规范写入**：遵循 DSH \`version: 1\` 标准规范写入 \`~/.dsh/.credentials.yaml\` 与 \`~/.dsh/settings.yaml\`，并提供运行时 RPC（\`/api/credentials.set\` 与 \`/api/settings.update\`）无缝热生效与实时落盘；
-- **原生文件夹选择器回退**：解除 Windows 下原生文件夹选择弹窗的静默隐藏限制，并自动提供 PowerShell 原生 \`FolderBrowserDialog\` 稳定回退，工作区选择更顺畅；
-- **全链路工具兼容与用量统计**：DSH 经 SwitchLite 转发后自动完成严格网关工具清洗与鉴权透传，支持深度思考流（Reasoning）、正文生成与 Token 精准统计。
+- **原生文件夹选择器回退**：解除 Windows 下原生文件夹选择弹窗的静默隐藏限制，并自动提供 PowerShell 原生 \`FolderBrowserDialog\` 稳定回退；
+- **全链路工具兼容与用量统计**：DSH 经 SwitchLite 转发后自动完成严格网关工具清洗与鉴权透传，支持深度思考流（Reasoning）与 Token 精准统计。
 
 #### 🎨 官方 Agent 库与交互体验升级
 - **大厂质感设计**：官方支持库重构为垂直卡片式下拉面板，去掉横向滚动条，单屏一览无余；
-- **官方高精度 SVG 图标库**：扩充包含 Cursor、Grok、Gemini、DeepSeek、Tare、QCoder、ZCode 等在内的全新高质感品牌矢量图标与品牌渐变背景；
-- **快速切换面板优化**：重构快速切换弹窗中的自定义 Select 选择器交互，操作触感与视觉层次更细腻。
-
-#### 🛡️ Windows 原子写入稳定性增强
-- 优化 \`writeFileAtomic\` 在 Windows 环境下的文件锁重试与直接写入兜底机制，彻底解决并发监听和热更新时的 \`EPERM\` 冲突。`,
+- **官方高精度 SVG 图标库**：扩充包含 Cursor、Grok、Gemini、DeepSeek、Tare、QCoder、ZCode 等在内的全新品牌矢量图标。`,
       draft: false,
       prerelease: false,
     };
