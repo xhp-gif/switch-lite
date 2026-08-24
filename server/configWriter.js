@@ -10,6 +10,62 @@ function homeDir() {
   return process.env.CCS_HOME_OVERRIDE ? path.resolve(process.env.CCS_HOME_OVERRIDE) : os.homedir();
 }
 
+
+// DeepSeek Harness 的 profile patch 层 (~/.dsh/profiles/web/cordis.patch.yml):
+// DSH 启动时把每个 bundle 层 + 该 profile 的 cordis.patch.yml 叠成最终配置树，
+// settings.yaml 的实时写入 (dsh-settings-file 的整文档重写) 无法删掉这里的键。
+// 把模型目录与默认模型写进这一层后，即使 DSH 自己的进程/设置页把 settings.yaml
+// 重写回不含 models 的旧快照，DSH 重启后模型选择器依然能看到带日期快照后缀的模型。
+function writeDshProfilePatch(catalog, modelId) {
+  const home = homeDir();
+  const profileDir = path.join(home, '.dsh', 'profiles', 'web');
+  const patchFile = path.join(profileDir, 'cordis.patch.yml');
+  fs.mkdirSync(profileDir, { recursive: true });
+
+  // 读取现有 patch 层并保留用户自己添加的其它条目。
+  let existing = [];
+  if (fs.existsSync(patchFile)) {
+    try {
+      const parsed = YAML.parse(fs.readFileSync(patchFile, 'utf8'));
+      if (Array.isArray(parsed)) existing = parsed;
+    } catch {
+      /* 解析失败则从空数组重建 */
+    }
+  }
+
+  const keep = existing.filter((row) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
+    const id = row.id;
+    return id !== 'llm-deepseek' && id !== 'agent-default-model';
+  });
+
+  const patch = [
+    ...keep,
+    {
+      id: 'llm-deepseek',
+      name: '@deepseek-ai/dsh-llm-deepseek',
+      config: { models: catalog },
+    },
+    {
+      id: 'agent-default-model',
+      name: '@deepseek-ai/dsh-agent-default-model',
+      config: {
+        provider: 'deepseek-official',
+        model: modelId,
+      },
+    },
+  ];
+
+  const header = [
+    '# Your patch layer for this dsh profile, applied after every bundle layer:',
+    '# a top-level YAML array of loader patch entries (id-targeted config',
+    '# overrides, disables, and insert lists; `!!js` expressions allowed).',
+    '# llm-deepseek / agent-default-model rows below are maintained by SwitchLite.',
+    '',
+  ].join('\n');
+  writeFileAtomic(patchFile, header + YAML.stringify(patch) + '\n');
+}
+
 export function targets() {
   const home = homeDir();
   const appData = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
@@ -475,6 +531,7 @@ function touchedFiles(target) {
       t.file,
       path.join(home, '.dsh', 'settings.yaml'),
       path.join(home, '.dsh', '.credentials.yaml'),
+      path.join(home, '.dsh', 'profiles', 'web', 'cordis.patch.yml'),
       path.join(home, '.deepseek', 'harness.json'),
     ];
   }
@@ -736,20 +793,44 @@ export function applyDeepSeekHarness(provider, modelId) {
     }
   }
 
-  const modelEntry = {
-    id: modelId,
-    name: modelId,
-    contextWindow: 1000000,
-    inputModalities: ['text'],
-  };
-  // 保证 llm-deepseek.models 目录包含当前模型 ID（含日期快照后缀），
-  // 否则 DSH 新建会话时目录匹配不到带后缀 ID，会静默回退到 deepseek-v4-flash。
+  // 模型目录的构造关键点（v0.5.5）：
+  // 1) 把该供应商 ALL 已抓取到的模型都写进 llm-deepseek.models —— 否则 DSH 的模型
+  //    列表/选择器只显示 models 目录里的模型，用户手动选择的模型一旦不在目录里，
+  //    就会在下一次进入 DSH 时看不到。
+  // 2) 当前选中的模型（含日期快照后缀）必须出现在目录中，且尽量靠前。
+  // 3) 兼容快照后缀模型与基础 ID：对于 "deepseek-v4-flash-0731" 这类带后缀 ID，
+  //    同时保证基础 ID "deepseek-v4-flash" 也在目录中，避免 DSH 把
+  //    agent-default-model 归一化回基础 ID 后找不到匹配项而回退。
+  const baseCatalogId = String(modelId).replace(/-\d{4,}$/, '');
+  const providerModelIds = Array.isArray(provider.models)
+    ? provider.models.map((m) => (m && m.id) || undefined).filter(Boolean)
+    : [];
   const existingModels = Array.isArray(doc['llm-deepseek']?.models)
     ? doc['llm-deepseek'].models
     : [];
-  const mergedModels = existingModels.some((m) => m && m.id === modelId)
-    ? existingModels
-    : [...existingModels, modelEntry];
+  const catalog = [];
+  const pushModel = (id) => {
+    if (!id || catalog.some((m) => m && m.id === id)) return;
+    const known = (Array.isArray(provider.models) ? provider.models : []).find((m) => m && m.id === id);
+    catalog.push({
+      id,
+      name: (known && known.name) || id,
+      contextWindow: (known && known.contextWindow) || 1000000,
+      inputModalities: ['text'],
+    });
+  };
+  // 选中模型优先（保留完整后缀）
+  pushModel(modelId);
+  // 快照后缀模型补基础 ID
+  if (baseCatalogId !== String(modelId)) pushModel(baseCatalogId);
+  // 供应商全部已抓取模型
+  for (const id of providerModelIds) pushModel(id);
+  // 此前目录中已有的模型一并保留
+  for (const m of existingModels) {
+    if (m && m.id) pushModel(m.id);
+  }
+  // 兜底：至少保留 1 个
+  if (catalog.length === 0) pushModel(modelId || 'deepseek-v4-flash');
 
   const settingsObj = {
     'agent-default-model': {
@@ -759,7 +840,7 @@ export function applyDeepSeekHarness(provider, modelId) {
     },
     'llm-deepseek': {
       baseURL: relayBaseUrl,
-      models: mergedModels,
+      models: catalog,
     },
     llm: {
       baseUrl: relayBaseUrl,
@@ -775,6 +856,8 @@ export function applyDeepSeekHarness(provider, modelId) {
   };
   const mergedDoc = { ...doc, ...settingsObj };
   writeFileAtomic(dshSettingsFile, YAML.stringify(mergedDoc) + '\n');
+  // 写 profile patch 层 (持久性兜底，防 DSH 重写 settings.yaml 抹掉 models)
+  writeDshProfilePatch(catalog, modelId);
 
   // 3. 写入 ~/.dsh/.credentials.yaml (遵循 dsh-credentials-local version: 1 标准)
   const credsLines = [
