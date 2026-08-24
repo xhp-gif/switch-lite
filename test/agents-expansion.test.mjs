@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import YAML from 'yaml';
 import { applyConfig, targets } from '../server/configWriter.js';
 import * as storage from '../server/storage.js';
 import { getRelayAutostart, setRelayAutostart } from '../server/autostart.js';
@@ -39,7 +40,10 @@ test('新 Agent 写入：Cursor / Grok / DeepSeek Harness / Tare / QCoder / ZCod
   assert.ok(fs.existsSync(resHarness.file));
   const settingsYaml = fs.readFileSync(resHarness.file, 'utf8');
   assert.ok(settingsYaml.includes('test-provider-id-999'));
-  assert.ok(settingsYaml.includes('model: "deepseek-v3"'));
+  const settingsDoc = YAML.parse(settingsYaml);
+  assert.equal(settingsDoc['agent-default-model'].model, 'deepseek-v3');
+  assert.equal(settingsDoc.llm.model, 'deepseek-v3');
+  assert.ok(settingsDoc['llm-deepseek'].models.some((m) => m.id === 'deepseek-v3'), 'llm-deepseek.models 应包含当前模型 ID');
 
   const credsFile = path.join(tmp, '.dsh', '.credentials.yaml');
   assert.ok(fs.existsSync(credsFile));
