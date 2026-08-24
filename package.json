@@ -14,7 +14,9 @@
     "start": "node server/index.js",
     "test": "node --test",
     "dist": "electron-builder --win nsis && node scripts/clean-7z.mjs && electron-builder --win -c.win.target=portable",
-    "dist:dir": "electron-builder --win --dir"
+    "dist:dir": "electron-builder --win --dir",
+    "dist:mac": "vite build && electron-builder --mac --x64 --arm64",
+    "dist:mac:dir": "electron-builder --mac --dir"
   },
   "build": {
     "appId": "com.switchlite.app",
@@ -39,6 +41,20 @@
     ],
     "directories": {
       "output": "release"
+    },
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "build/icon.png",
+      "category": "public.app-category.developer-tools",
+      "artifactName": "SwitchLite-${version}-${arch}.${ext}",
+      "hardenedRuntime": true
+    },
+    "dmg": {
+      "title": "SwitchLite ${version}",
+      "artifactName": "SwitchLite-${version}.${ext}"
     },
     "win": {
       "target": "nsis",
