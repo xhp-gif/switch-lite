@@ -15,8 +15,9 @@
     "test": "node --test",
     "dist": "electron-builder --win nsis && node scripts/clean-7z.mjs && electron-builder --win -c.win.target=portable",
     "dist:dir": "electron-builder --win --dir",
-    "dist:mac": "vite build && electron-builder --mac --x64 --arm64",
-    "dist:mac:dir": "electron-builder --mac --dir"
+    "dist:mac": "node scripts/build-mac.mjs",
+    "dist:mac:dir": "electron-builder --mac --dir",
+    "dist:mac:upload": "node scripts/build-mac.mjs --upload"
   },
   "build": {
     "appId": "com.switchlite.app",
@@ -80,9 +81,11 @@
     "yaml": "^2.9.0"
   },
   "devDependencies": {
+    "@electron/packager": "^20.3.0",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.4",
+    "adm-zip": "^0.6.0",
     "electron": "^31.7.7",
     "electron-builder": "^25.1.8",
     "rcedit": "^5.0.2",
