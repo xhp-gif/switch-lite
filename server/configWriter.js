@@ -819,14 +819,46 @@ export function applyDeepSeekHarness(provider, modelId) {
       inputModalities: ['text'],
     });
   };
+  // 过滤非对话模型（只保留适合聊天的模型）：
+  // - 供应商模型若带 channel 字段，优先按 channel 判定（chat/completions/llm 为对话）
+  // - 不带 channel 时按命名识别：嵌入(embedding/bge)、OCR(ocr)、图像(image/vision)、
+  //   向量(vector)、结构(structure/pp-) 等一律排除
+  // - 用户当前选中的模型总是保留（即使命名不典型），且排在最前
+  const CHAT_CHANNELS = new Set(['chat', 'completions', 'llm', 'chat-completions', 'text']);
+  const NON_CHAT_HINTS = [
+    /embed/i, /bge/i, /vector/i, /retriev/i, /rerank/i,
+    /ocr/i, /vision/i, /image/i, /pic/i, /draw/i, /art/i, /tts/i, /asr/i, /whisper/i,
+    /^pp-/i, /structure/i, /segment/i, /layout/i, /detect/i, /caption/i, /naming/i,
+  ];
+  const isChatModel = (m) => {
+    if (!m || !m.id) return false;
+    const id = String(m.id);
+    const obj = m;
+    if (typeof obj.channel === 'string' && obj.channel.trim()) {
+      return CHAT_CHANNELS.has(obj.channel.trim().toLowerCase());
+    }
+    if (typeof obj.type === 'string' && obj.type.trim()) {
+      const t = obj.type.trim().toLowerCase();
+      if (t === 'chat' || t === 'llm' || t === 'completions') return true;
+      if (t === 'embedding' || t === 'image' || t === 'ocr' || t === 'rerank' || t === 'tts' || t === 'asr') return false;
+    }
+    return !NON_CHAT_HINTS.some((re) => re.test(id));
+  };
+  const filterChatModels = (list) => (Array.isArray(list) ? list : []).filter(isChatModel);
+  const providerChatModelIds = filterChatModels(providerModelIds.map((id) => {
+    const known = (Array.isArray(provider.models) ? provider.models : []).find((m) => m && m.id === id);
+    return known || { id };
+  })).map((m) => m.id);
+
+
   // 选中模型优先（保留完整后缀）
   pushModel(modelId);
   // 快照后缀模型补基础 ID
   if (baseCatalogId !== String(modelId)) pushModel(baseCatalogId);
-  // 供应商全部已抓取模型
-  for (const id of providerModelIds) pushModel(id);
-  // 此前目录中已有的模型一并保留
-  for (const m of existingModels) {
+  // 供应商全部已抓取模型（只保留对话模型）
+  for (const id of providerChatModelIds) pushModel(id);
+  // 此前目录中已有的模型一并保留（同样过滤非对话模型）
+  for (const m of filterChatModels(existingModels)) {
     if (m && m.id) pushModel(m.id);
   }
   // 兜底：至少保留 1 个

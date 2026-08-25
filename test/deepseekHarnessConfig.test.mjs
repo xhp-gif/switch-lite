@@ -125,3 +125,44 @@ test('cordis.patch.yml 持久层保留模型目录，DSH 重启/重写 settings.
   assert.ok(ids2.includes('deepseek-v4-flash-0731'), 'DSH 重写 settings.yaml 后 patch 层 0731 仍在');
   assert.ok(ids2.includes('deepseek-v4-flash'), 'DSH 重写 settings.yaml 后 patch 层基础 ID 仍在');
 });
+
+test('模型目录只保留对话模型，过滤嵌入/OCR/图片等非聊天模型', (t) => {
+  const base = tmpHome(t);
+  // 造一个混合模型列表：对话 + 嵌入 + OCR + 图片
+  const provider = PROVIDER({
+    models: [
+      { id: 'deepseek-v4-flash-0731' },
+      { id: 'deepseek-v4-flash' },
+      { id: 'glm-5.2' },
+      { id: 'embedding' },
+      { id: 'bge-large-zh' },
+      { id: 'deepseek-ocr' },
+      { id: 'qwen-image' },
+      { id: 'pp-structurev3' },
+      { id: 'paddleocr-vl-0.9b' },
+    ],
+  });
+  cw.applyDeepSeekHarness(provider, 'deepseek-v4-flash-0731');
+
+  const doc = YAML.parse(fs.readFileSync(path.join(base, '.dsh', 'settings.yaml'), 'utf8'));
+  const ids = doc['llm-deepseek'].models.map((m) => m.id);
+
+  // 对话模型保留
+  for (const keep of ['deepseek-v4-flash-0731', 'deepseek-v4-flash', 'glm-5.2']) {
+    assert.ok(ids.includes(keep), `应保留对话模型 ${keep}`);
+  }
+  // 非对话模型剔除
+  for (const drop of ['embedding', 'bge-large-zh', 'deepseek-ocr', 'qwen-image', 'pp-structurev3', 'paddleocr-vl-0.9b']) {
+    assert.ok(!ids.includes(drop), `应过滤非对话模型 ${drop}`);
+  }
+
+  // patch 层同样只保留对话模型
+  const patchFile = path.join(base, '.dsh', 'profiles', 'web', 'cordis.patch.yml');
+  const rows = YAML.parse(fs.readFileSync(patchFile, 'utf8'));
+  const llm = rows.find((r) => r && r.id === 'llm-deepseek');
+  const patchIds = llm.config.models.map((m) => m.id);
+  for (const drop of ['embedding', 'deepseek-ocr']) {
+    assert.ok(!patchIds.includes(drop), `patch 层应过滤 ${drop}`);
+  }
+  assert.ok(patchIds.includes('deepseek-v4-flash-0731'), 'patch 层保留 0731');
+});
