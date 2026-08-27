@@ -92,7 +92,7 @@ export const AGENTS = BUILTIN_AGENTS;
 
 export const DEFAULT_ENABLED_AGENTS = ['codex', 'claude', 'cursor', 'grok', 'deepseek_harness', 'opencode'];
 
-export const APP_VERSION = '0.5.7';
+export const APP_VERSION = '0.5.8';
 
 export interface CustomAgentPreset {
   id: string;
