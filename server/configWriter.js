@@ -16,7 +16,7 @@ function homeDir() {
 // settings.yaml 的实时写入 (dsh-settings-file 的整文档重写) 无法删掉这里的键。
 // 把模型目录与默认模型写进这一层后，即使 DSH 自己的进程/设置页把 settings.yaml
 // 重写回不含 models 的旧快照，DSH 重启后模型选择器依然能看到带日期快照后缀的模型。
-function writeDshProfilePatch(catalog, modelId) {
+function writeDshProfilePatch(providers, activeProviderKey, activeModelId) {
   const home = homeDir();
   const profileDir = path.join(home, '.dsh', 'profiles', 'web');
   const patchFile = path.join(profileDir, 'cordis.patch.yml');
@@ -36,7 +36,7 @@ function writeDshProfilePatch(catalog, modelId) {
   const keep = existing.filter((row) => {
     if (!row || typeof row !== 'object' || Array.isArray(row)) return false;
     const id = row.id;
-    return id !== 'llm-deepseek' && id !== 'agent-default-model';
+    return id !== 'llm-deepseek' && id !== 'llm-pi-ai' && id !== 'agent-default-model';
   });
 
   const patch = [
@@ -44,14 +44,21 @@ function writeDshProfilePatch(catalog, modelId) {
     {
       id: 'llm-deepseek',
       name: '@deepseek-ai/dsh-llm-deepseek',
-      config: { models: catalog },
+      disabled: true,
+    },
+    {
+      id: 'llm-pi-ai',
+      name: '@deepseek-ai/dsh-llm-pi-ai',
+      config: {
+        providers,
+      },
     },
     {
       id: 'agent-default-model',
       name: '@deepseek-ai/dsh-agent-default-model',
       config: {
-        provider: 'deepseek-official',
-        model: modelId,
+        provider: activeProviderKey,
+        model: activeModelId,
       },
     },
   ];
@@ -60,7 +67,7 @@ function writeDshProfilePatch(catalog, modelId) {
     '# Your patch layer for this dsh profile, applied after every bundle layer:',
     '# a top-level YAML array of loader patch entries (id-targeted config',
     '# overrides, disables, and insert lists; `!!js` expressions allowed).',
-    '# llm-deepseek / agent-default-model rows below are maintained by SwitchLite.',
+    '# llm-pi-ai / agent-default-model rows below are maintained by SwitchLite.',
     '',
   ].join('\n');
   writeFileAtomic(patchFile, header + YAML.stringify(patch) + '\n');
@@ -336,11 +343,12 @@ function applyClaude(provider, modelId) {
   fs.writeFileSync(targets().claude.file, JSON.stringify(settings, null, 2) + '\n', 'utf8');
 }
 
-function buildCatalogEntry(modelId) {
+function buildCatalogEntry(modelId, providerDisplayName) {
+  const label = providerDisplayName ? `${providerDisplayName} / ${modelId}` : modelId;
   return {
     slug: modelId,
-    display_name: modelId,
-    description: `Configured via SwitchLite: ${modelId}`,
+    display_name: label,
+    description: `Configured via SwitchLite: ${label}`,
     context_window: 200000,
     max_context_window: 200000,
     effective_context_window_percent: 95,
@@ -374,7 +382,7 @@ function buildCatalogEntry(modelId) {
 
 /**
  * 写入 SwitchLite 自己的模型目录，并尽量继承已有目录（如 cc-switch 的），
- * 保证 Codex 模型列表里之前配置过的模型不会消失。
+ * 保证 Codex 模型列表里之前配置过的模型不会消失，并标注对应的供应商名称。
  */
 function writeCodexCatalog(provider, modelId) {
   const codexDir = path.join(homeDir(), '.codex');
@@ -383,9 +391,10 @@ function writeCodexCatalog(provider, modelId) {
   const ccSwitchCatalog = path.join(codexDir, 'cc-switch-model-catalog.json');
   const strict = isStrictHost(provider.baseUrl);
   let models = [];
+  const inheritFrom = fs.existsSync(catalogFile) ? catalogFile : ccSwitchCatalog;
   try {
-    if (fs.existsSync(ccSwitchCatalog)) {
-      const base = JSON.parse(fs.readFileSync(ccSwitchCatalog, 'utf8'));
+    if (fs.existsSync(inheritFrom)) {
+      const base = JSON.parse(fs.readFileSync(inheritFrom, 'utf8'));
       if (Array.isArray(base.models)) {
         models = base.models.filter((m) => m && m.slug).map((m) => ({ ...m }));
       }
@@ -393,13 +402,26 @@ function writeCodexCatalog(provider, modelId) {
   } catch {
     /* 继承失败就只用内置模板 */
   }
-  if (!models.some((m) => m.slug === modelId)) {
-    // 新模型使用干净的最小卡片，不复用其他模型卡的 comp_hash / base_instructions 等专属字段
-    models.push(buildCatalogEntry(modelId));
+
+  const displayName = dshProviderDisplayName(provider);
+  let entry = models.find((m) => m.slug === modelId);
+  if (!entry) {
+    entry = buildCatalogEntry(modelId, displayName);
+    models.push(entry);
+  } else {
+    entry.display_name = `${displayName} / ${modelId}`;
+    entry.description = `Configured via SwitchLite: ${displayName} / ${modelId}`;
   }
+
+  // 让当前应用的模型成为目录默认项（priority=1 且排到列表最前）：
+  for (const m of models) {
+    if (m.slug === modelId) m.priority = 1;
+    else if (typeof m.priority !== 'number' || m.priority < 2) m.priority = 2;
+  }
+  models.sort((a, b) => (a.slug === modelId ? -1 : b.slug === modelId ? 1 : 0));
+
   if (strict) {
     // 严格网关（千帆等）只接受 function/mcp/knowledge_search 工具：
-    // 清理继承卡片里会触发 custom 工具的字段，并关闭 verbosity
     for (const m of models) {
       delete m.apply_patch_tool_type;
       delete m.web_search_tool_type;
@@ -596,6 +618,7 @@ function syncCursorStateDb(provider, modelId) {
     data.openAIBaseUrl = relayUrl;
 
     // 注入模型到 availableDefaultModels2
+    const displayName = dshProviderDisplayName(provider);
     data.availableDefaultModels2 = data.availableDefaultModels2 || [];
     const existing = data.availableDefaultModels2.find((m) => m && m.name === modelId);
     if (!existing) {
@@ -606,11 +629,11 @@ function syncCursorStateDb(provider, modelId) {
         variants: [
           {
             parameterValues: [],
-            displayName: modelId,
+            displayName: `${displayName} / ${modelId}`,
             isMaxMode: false,
             isDefaultMaxConfig: true,
             isDefaultNonMaxConfig: true,
-            displayNameOutsidePicker: modelId,
+            displayNameOutsidePicker: `${displayName} / ${modelId}`,
             variantStringRepresentation: `${modelId}[]`,
             legacySlug: modelId,
           },
@@ -626,7 +649,7 @@ function syncCursorStateDb(provider, modelId) {
         supportsMaxMode: true,
         contextTokenLimit: 128000,
         contextTokenLimitForMaxMode: 128000,
-        clientDisplayName: modelId,
+        clientDisplayName: `${displayName} / ${modelId}`,
         serverModelName: modelId,
         supportsNonMaxMode: true,
         isRecommendedForBackgroundComposer: false,
@@ -635,8 +658,14 @@ function syncCursorStateDb(provider, modelId) {
         supportsSandboxing: true,
         namedModelSectionIndex: 1,
         vendorName: 'custom',
-        vendor: { id: 99, displayName: 'Custom' },
+        vendor: { id: 99, displayName: displayName || 'Custom' },
       });
+    } else {
+      existing.clientDisplayName = `${displayName} / ${modelId}`;
+      if (existing.variants && existing.variants[0]) {
+        existing.variants[0].displayName = `${displayName} / ${modelId}`;
+        existing.variants[0].displayNameOutsidePicker = `${displayName} / ${modelId}`;
+      }
     }
 
     // 启用该模型
@@ -681,12 +710,57 @@ export function applyGrok(provider, modelId) {
   writeFileAtomic(file, JSON.stringify(current, null, 2) + '\n');
 }
 
-async function tryDshRpc(provider, modelId) {
+export function dshProviderDisplayName(provider) {
+  const name = String(provider.name || '').trim();
+  if (name && !name.includes('://') && !/^[a-z0-9.-]+\.[a-z]{2,}$/i.test(name) && !name.startsWith('http')) {
+    return name;
+  }
+  const baseUrl = String(provider.baseUrl || '').toLowerCase();
+  if (baseUrl.includes('sensenova.cn')) return '商汤日日新';
+  if (baseUrl.includes('qianfan.baidubce.com')) return '百度千帆';
+  if (baseUrl.includes('dashscope.aliyuncs.com')) return '阿里云百炼';
+  if (baseUrl.includes('deepseek.com')) return 'DeepSeek 官方';
+  if (baseUrl.includes('bigmodel.cn')) return '智谱 GLM';
+  if (baseUrl.includes('moonshot.cn')) return 'Moonshot Kimi';
+  if (baseUrl.includes('siliconflow.cn')) return '硅基流动';
+  if (baseUrl.includes('volces.com')) return '火山方舟';
+  if (baseUrl.includes('minimaxi.com')) return 'MiniMax';
+  if (baseUrl.includes('x.ai')) return 'xAI Grok';
+  if (baseUrl.includes('anthropic.com')) return 'Anthropic';
+  if (baseUrl.includes('googleapis.com')) return 'Google Gemini';
+  return name || '自定义供应商';
+}
+
+export function dshProviderKey(provider) {
+  const displayName = dshProviderDisplayName(provider);
+  let raw = provider.presetId && provider.presetId !== 'custom' ? provider.presetId : displayName;
+  if (displayName === '商汤日日新' || displayName.includes('商汤')) raw = 'sensenova';
+  else if (displayName === '百度千帆' || displayName.includes('千帆')) raw = 'baidu';
+  else if (displayName === '阿里云百炼' || displayName.includes('阿里') || displayName.includes('百炼')) raw = 'aliyun';
+  else if (displayName === 'DeepSeek 官方' || displayName.includes('DeepSeek')) raw = 'deepseek';
+  else if (displayName === '智谱 GLM' || displayName.includes('智谱') || displayName.includes('GLM')) raw = 'zhipu';
+  else if (displayName === 'Moonshot Kimi' || displayName.includes('Kimi')) raw = 'moonshot';
+  else if (displayName === '硅基流动') raw = 'siliconflow';
+  else if (displayName === '火山方舟' || displayName.includes('火山')) raw = 'volcengine';
+  else if (displayName === 'MiniMax') raw = 'minimax';
+  else if (displayName === 'xAI Grok' || displayName.includes('Grok')) raw = 'xai';
+  else if (displayName === 'Anthropic' || displayName.includes('Claude')) raw = 'anthropic';
+  else if (displayName === 'Google Gemini' || displayName.includes('Gemini')) raw = 'gemini';
+
+  const slug = String(raw || 'provider')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 30);
+  const key = slug || String(provider.id || 'p').replace(/[^a-z0-9]/gi, '').slice(0, 8);
+  return `csl_${key}`;
+}
+
+async function tryDshRpc(provider, modelId, providerKey, credKey) {
   if (process.env.CCS_HOME_OVERRIDE || process.env.NODE_ENV === 'test') {
     return;
   }
   const directApiKey = provider.apiKey || '';
-  const relayBaseUrl = provider.id ? relayProviderUrl(provider.id) : (provider.baseUrl || '');
   const ports = [3080, 52331];
 
   for (const port of ports) {
@@ -718,6 +792,7 @@ async function tryDshRpc(provider, modelId) {
       payload: {
         ns: 'agent-default-model',
         patch: {
+          provider: providerKey,
           model: modelId,
         },
       },
@@ -745,22 +820,6 @@ async function tryDshRpc(provider, modelId) {
           body: JSON.stringify(settingsPayload),
           signal: controller.signal,
         }).catch(() => null),
-        fetch(settingsUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            type: 'client-request',
-            rpcId: `switchlite-llm-ds-${Date.now()}`,
-            method: 'settings.update',
-            payload: {
-              ns: 'llm-deepseek',
-              patch: {
-                baseURL: relayBaseUrl,
-              },
-            },
-          }),
-          signal: controller.signal,
-        }).catch(() => null),
       ]);
       clearTimeout(timer);
     } catch {
@@ -781,9 +840,11 @@ export function applyDeepSeekHarness(provider, modelId) {
   const relayBaseUrl = provider.id ? relayProviderUrl(provider.id) : (provider.baseUrl || '');
   const directBaseUrl = provider.baseUrl || '';
   const directApiKey = provider.apiKey || '';
+  const displayName = dshProviderDisplayName(provider);
+  const providerKey = dshProviderKey(provider);
+  const credKey = 'DEEPSEEK_API_KEY';
 
-  // 2. 读取现有 settings.yaml 并保留非 SwitchLite 管理的命名空间（如 ui-onboarding），
-  //    然后覆写 DeepSeek Harness 相关字段，避免直接重建导致其他配置丢失。
+  // 读取现有 settings.yaml
   let doc = {};
   if (fs.existsSync(dshSettingsFile)) {
     try {
@@ -793,37 +854,11 @@ export function applyDeepSeekHarness(provider, modelId) {
     }
   }
 
-  // 模型目录的构造关键点（v0.5.5）：
-  // 1) 把该供应商 ALL 已抓取到的模型都写进 llm-deepseek.models —— 否则 DSH 的模型
-  //    列表/选择器只显示 models 目录里的模型，用户手动选择的模型一旦不在目录里，
-  //    就会在下一次进入 DSH 时看不到。
-  // 2) 当前选中的模型（含日期快照后缀）必须出现在目录中，且尽量靠前。
-  // 3) 兼容快照后缀模型与基础 ID：对于 "deepseek-v4-flash-0731" 这类带后缀 ID，
-  //    同时保证基础 ID "deepseek-v4-flash" 也在目录中，避免 DSH 把
-  //    agent-default-model 归一化回基础 ID 后找不到匹配项而回退。
-  const baseCatalogId = String(modelId).replace(/-\d{4,}$/, '');
-  const providerModelIds = Array.isArray(provider.models)
-    ? provider.models.map((m) => (m && m.id) || undefined).filter(Boolean)
-    : [];
-  const existingModels = Array.isArray(doc['llm-deepseek']?.models)
-    ? doc['llm-deepseek'].models
-    : [];
-  const catalog = [];
-  const pushModel = (id) => {
-    if (!id || catalog.some((m) => m && m.id === id)) return;
-    const known = (Array.isArray(provider.models) ? provider.models : []).find((m) => m && m.id === id);
-    catalog.push({
-      id,
-      name: (known && known.name) || id,
-      contextWindow: (known && known.contextWindow) || 1000000,
-      inputModalities: ['text'],
-    });
-  };
-  // 过滤非对话模型（只保留适合聊天的模型）：
-  // - 供应商模型若带 channel 字段，优先按 channel 判定（chat/completions/llm 为对话）
-  // - 不带 channel 时按命名识别：嵌入(embedding/bge)、OCR(ocr)、图像(image/vision)、
-  //   向量(vector)、结构(structure/pp-) 等一律排除
-  // - 用户当前选中的模型总是保留（即使命名不典型），且排在最前
+  // 1. 初始化 / 继承已有的 llm-pi-ai.providers 字典（类似 OpenCode 多 Provider 架构）
+  const existingProviders = doc['llm-pi-ai']?.providers || {};
+  const currentProviderEntry = existingProviders[providerKey] || {};
+  const existingModels = Array.isArray(currentProviderEntry.models) ? currentProviderEntry.models : [];
+
   const CHAT_CHANNELS = new Set(['chat', 'completions', 'llm', 'chat-completions', 'text']);
   const NON_CHAT_HINTS = [
     /embed/i, /bge/i, /vector/i, /retriev/i, /rerank/i,
@@ -844,35 +879,50 @@ export function applyDeepSeekHarness(provider, modelId) {
     }
     return !NON_CHAT_HINTS.some((re) => re.test(id));
   };
-  const filterChatModels = (list) => (Array.isArray(list) ? list : []).filter(isChatModel);
-  const providerChatModelIds = filterChatModels(providerModelIds.map((id) => {
-    const known = (Array.isArray(provider.models) ? provider.models : []).find((m) => m && m.id === id);
-    return known || { id };
-  })).map((m) => m.id);
 
+  const baseCatalogId = String(modelId).replace(/-\d{4,}$/, '');
+  const providerModels = Array.isArray(provider.models) ? provider.models : [];
+  const providerChatModels = providerModels.filter(isChatModel);
 
-  // 选中模型优先（保留完整后缀）
+  const models = [...existingModels];
+  const pushModel = (id) => {
+    if (!id || models.some((m) => m && m.id === id)) return;
+    const known = providerModels.find((m) => m && m.id === id);
+    models.push({
+      id,
+      name: (known && known.name) || id,
+      contextWindow: (known && known.contextWindow) || 128000,
+      maxTokens: (known && known.maxTokens) || 8192,
+      input: ['text'],
+    });
+  };
+
+  // 1) 增量追加本次用户选中的模型（及其快照基础名）
   pushModel(modelId);
-  // 快照后缀模型补基础 ID
   if (baseCatalogId !== String(modelId)) pushModel(baseCatalogId);
-  // 供应商全部已抓取模型（只保留对话模型）
-  for (const id of providerChatModelIds) pushModel(id);
-  // 此前目录中已有的模型一并保留（同样过滤非对话模型）
-  for (const m of filterChatModels(existingModels)) {
-    if (m && m.id) pushModel(m.id);
-  }
-  // 兜底：至少保留 1 个
-  if (catalog.length === 0) pushModel(modelId || 'deepseek-v4-flash');
+
+  // 2) 调整顺序：将当前选中的模型排在第一位
+  models.sort((a, b) => (a.id === modelId ? -1 : b.id === modelId ? 1 : 0));
+
+  const updatedProviders = {
+    ...existingProviders,
+    [providerKey]: {
+      displayName,
+      apiKeyEnv: credKey,
+      api: 'openai-completions',
+      baseURL: relayBaseUrl,
+      models,
+    },
+  };
 
   const settingsObj = {
     'agent-default-model': {
+      provider: providerKey,
       model: modelId,
-      provider: 'deepseek-official',
-      reasoningEffort: 'max',
+      reasoningEffort: 'high',
     },
-    'llm-deepseek': {
-      baseURL: relayBaseUrl,
-      models: catalog,
+    'llm-pi-ai': {
+      providers: updatedProviders,
     },
     llm: {
       baseUrl: relayBaseUrl,
@@ -883,26 +933,34 @@ export function applyDeepSeekHarness(provider, modelId) {
     base_url: relayBaseUrl,
     defaultModel: modelId,
     model: modelId,
-    provider: provider.name || 'deepseek',
+    provider: displayName,
     updated_at: new Date().toISOString(),
   };
+
+  // 清除旧的单通道 llm-deepseek 命名空间
+  delete doc['llm-deepseek'];
+
   const mergedDoc = { ...doc, ...settingsObj };
   writeFileAtomic(dshSettingsFile, YAML.stringify(mergedDoc) + '\n');
-  // 写 profile patch 层 (持久性兜底，防 DSH 重写 settings.yaml 抹掉 models)
-  writeDshProfilePatch(catalog, modelId);
 
-  // 3. 写入 ~/.dsh/.credentials.yaml (遵循 dsh-credentials-local version: 1 标准)
-  const credsLines = [
-    `# DeepSeek Harness Credentials (Generated by SwitchLite)`,
-    `version: 1`,
-    `refs:`,
-    `  DEEPSEEK_API_KEY: "${directApiKey}"`,
-    `  OPENAI_API_KEY: "${directApiKey}"`,
-    `  ANTHROPIC_API_KEY: "${directApiKey}"`,
-    `  API_KEY: "${directApiKey}"`,
-    `  QIANFAN_API_KEY: "${directApiKey}"`,
-  ];
-  writeFileAtomic(dshCredentialsFile, credsLines.join('\n') + '\n');
+  // 2. 写 profile patch 层 (持久层保留所有厂商分支)
+  writeDshProfilePatch(updatedProviders, providerKey, modelId);
+
+  // 3. 写入 ~/.dsh/.credentials.yaml (注入全套标准 Key 变量)
+  let credsDoc = { version: 1, refs: {} };
+  if (fs.existsSync(dshCredentialsFile)) {
+    try {
+      const parsed = YAML.parse(fs.readFileSync(dshCredentialsFile, 'utf8'));
+      if (parsed && typeof parsed === 'object') {
+        credsDoc = { ...parsed, refs: parsed.refs || {} };
+      }
+    } catch {}
+  }
+  credsDoc.refs = credsDoc.refs || {};
+  credsDoc.refs.DEEPSEEK_API_KEY = directApiKey || 'sk-switchlite';
+  credsDoc.refs.OPENAI_API_KEY = directApiKey || 'sk-switchlite';
+  credsDoc.refs.API_KEY = directApiKey || 'sk-switchlite';
+  writeFileAtomic(dshCredentialsFile, YAML.stringify(credsDoc) + '\n');
 
   // 4. 兼容写入旧版 ~/.deepseek/harness.json
   try {
@@ -911,7 +969,7 @@ export function applyDeepSeekHarness(provider, modelId) {
     current.base_url = directBaseUrl;
     current.api_key = directApiKey;
     current.model = modelId;
-    current.provider_name = provider.name;
+    current.provider_name = displayName;
     current.updated_at = new Date().toISOString();
     writeFileAtomic(legacyHarnessFile, JSON.stringify(current, null, 2) + '\n');
   } catch {
@@ -919,7 +977,7 @@ export function applyDeepSeekHarness(provider, modelId) {
   }
 
   // 5. 若 dsh 正在后台运行，尝试通过 RPC 立即通知热生效
-  tryDshRpc(provider, modelId).catch(() => {});
+  tryDshRpc(provider, modelId, providerKey, credKey).catch(() => {});
 }
 
 export function applyTare(provider, modelId) {

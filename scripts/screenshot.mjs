@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createApp } from '../server/app.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const arg = (name, def) => {
@@ -14,8 +15,9 @@ const arg = (name, def) => {
 const out = arg('out', path.join(__dirname, '..', 'ui-preview.png'));
 const width = Number(arg('width', '1180'));
 const height = Number(arg('height', '800'));
-const url = arg('url', 'http://127.0.0.1:4174');
 const logFile = arg('log', path.join(os.tmpdir(), 'switchlite-shot.log'));
+const action = arg('action', '');
+
 const log = (msg) => {
   try {
     fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`, 'utf8');
@@ -32,8 +34,17 @@ const guard = setTimeout(() => {
   app.exit(2);
 }, 30000);
 
+let serverInstance;
+
 app.whenReady().then(async () => {
   log('ready');
+  const server = createApp();
+  const PORT = 4198;
+  await new Promise((resolve) => {
+    serverInstance = server.listen(PORT, '127.0.0.1', resolve);
+  });
+  log('server listening on ' + PORT);
+
   const win = new BrowserWindow({
     width,
     height,
@@ -41,65 +52,52 @@ app.whenReady().then(async () => {
     webPreferences: { offscreen: true, contextIsolation: true, nodeIntegration: false, sandbox: true },
   });
   log('window created');
-  await win.loadURL(url);
+  await win.loadURL(`http://127.0.0.1:${PORT}`);
   log('loaded');
-  await new Promise((r) => setTimeout(r, 1500));
-  const diag = await win.webContents.executeJavaScript(`(() => {
-    const sideItems = [...document.querySelectorAll('.side-item.agent')];
-    const svgs = [...document.querySelectorAll('.side-item.agent svg')];
-    const active = document.querySelector('.side-item.agent.active');
-    const headIcon = document.querySelector('.agent-head-icon svg');
-    const main = document.querySelector('.main');
-    const card = document.querySelector('.card');
-    return {
-      title: document.title,
-      sideItems: sideItems.map((el) => el.textContent.replace(/\\s+/g, ' ').trim()),
-      svgCount: svgs.length,
-      hermesImg: (() => {
-        const img = document.querySelector('.side-item.agent img');
-        return img ? { loaded: img.naturalWidth > 0, size: img.naturalWidth + 'x' + img.naturalHeight } : null;
-      })(),
-      ccWarning: !!document.querySelector('.cc-switch-warning'),
-      brandImg: !!document.querySelector('.brand img'),
-      topbarAgent: document.querySelector('.topbar-agent span:last-child')?.textContent || null,
-      sideBrandImg: !!document.querySelector('.side-brand-mark img'),
-      emptyIcon: !!document.querySelector('.empty svg'),
-      activeName: active ? active.querySelector('.side-name')?.textContent : null,
-      activeTileBg: active ? getComputedStyle(active.querySelector('.agent-tile')).backgroundColor : null,
-      headIcon: headIcon ? headIcon.getAttribute('viewBox') : null,
-      mainVisible: main ? main.getBoundingClientRect().height : null,
-      cardVisible: card ? card.getBoundingClientRect().height : null,
-      bodyOverflow: document.body.scrollHeight > window.innerHeight,
-    };
-  })()`);
-  console.log(JSON.stringify(diag, null, 2));
-  log('diag ok');
-  if (arg('click', '')) {
+  await new Promise((r) => setTimeout(r, 1200));
+
+  if (action === 'edit_modal') {
+    // Click on the first edit button
     await win.webContents.executeJavaScript(`(() => {
-      const el = [...document.querySelectorAll('.side-item.agent')].find((x) => x.textContent.startsWith(${JSON.stringify(arg('click', ''))}));
-      el?.click();
-      return !!el;
+      const editBtns = [...document.querySelectorAll('.btn')].filter((b) => b.textContent.includes('编辑'));
+      if (editBtns.length > 0) editBtns[0].click();
     })()`);
-    await new Promise((r) => setTimeout(r, 700));
-    const after = await win.webContents.executeJavaScript(`(() => ({
-      active: document.querySelector('.side-item.agent.active .side-name')?.textContent,
-      h1: document.querySelector('.agent-head h1')?.textContent,
-      configHint: document.querySelector('.agent-head .hint')?.textContent,
-      quickTitle: document.querySelector('.quick-card h3')?.textContent,
-    }))()`);
-    console.log('AFTER_CLICK ' + JSON.stringify(after));
-    log('click ok');
+    await new Promise((r) => setTimeout(r, 800));
+  } else if (action === 'edit_modal_all') {
+    await win.webContents.executeJavaScript(`(() => {
+      const editBtns = [...document.querySelectorAll('.btn')].filter((b) => b.textContent.includes('编辑'));
+      if (editBtns.length > 0) editBtns[0].click();
+    })()`);
+    await new Promise((r) => setTimeout(r, 600));
+    await win.webContents.executeJavaScript(`(() => {
+      const tabs = [...document.querySelectorAll('.tab')].filter((t) => t.textContent.includes('全部'));
+      if (tabs.length > 0) tabs[0].click();
+    })()`);
+    await new Promise((r) => setTimeout(r, 400));
+  } else if (action === 'quick_fetch') {
+    // Fill URL and Key and fetch
+    await win.webContents.executeJavaScript(`(() => {
+      const inputs = document.querySelectorAll('.form-grid input');
+      if (inputs.length >= 2) {
+        inputs[0].value = 'https://api.deepseek.com';
+        inputs[0].dispatchEvent(new Event('input', { bubbles: true }));
+      }
+    })()`);
+    await new Promise((r) => setTimeout(r, 500));
   }
+
   const image = await win.webContents.capturePage();
   log('captured');
   fs.writeFileSync(out, image.toPNG());
   console.log(`saved ${out} (${width}x${height})`);
   log('saved');
+  if (serverInstance) serverInstance.close();
   clearTimeout(guard);
   app.exit(0);
 }).catch((err) => {
   console.error(err);
   log('error: ' + (err && err.message ? err.message : String(err)));
+  if (serverInstance) serverInstance.close();
   clearTimeout(guard);
   app.exit(1);
 });

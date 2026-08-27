@@ -627,6 +627,28 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
         outBody = stripUnsupportedTools(body);
       }
 
+      // 针对第三方网关（如千帆、商汤等限制 max_tokens <= 131072）：
+      // 客户端若下发过大 output budget（如 DSH 默认的 256000），自动收敛为 8192，避免网关 400 报错
+      try {
+        const obj = JSON.parse(outBody);
+        if (obj && typeof obj === 'object') {
+          let modified = false;
+          if (typeof obj.max_tokens === 'number' && obj.max_tokens > 131072) {
+            obj.max_tokens = 8192;
+            modified = true;
+          }
+          if (typeof obj.max_output_tokens === 'number' && obj.max_output_tokens > 131072) {
+            obj.max_output_tokens = 8192;
+            modified = true;
+          }
+          if (modified) {
+            outBody = JSON.stringify(obj);
+          }
+        }
+      } catch {
+        /* not JSON */
+      }
+
       // native-Anthropic gateway (non-official, e.g. Kimi coding v1) request tweak:
       // (Claude Code auto mode classifier sends max_tokens<=2048; K3 thinking eats that budget,
       //  so content comes back empty/slow -> relay reports classifier error).

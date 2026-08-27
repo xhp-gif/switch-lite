@@ -30,7 +30,6 @@ export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [endpoint, setEndpoint] = useState('');
   const [error, setError] = useState('');
-  const [customModelId, setCustomModelId] = useState('');
   const [autoHealedUrl, setAutoHealedUrl] = useState('');
 
   const preset = presets.find((p) => p.id === presetId) || null;
@@ -184,31 +183,6 @@ export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
           />
         </div>
       )}
-
-      {/* 手动指定模型 ID 兜底输入框 */}
-      <div style={{ marginTop: '14px', padding: '12px', background: 'var(--panel-soft)', borderRadius: '10px', border: '1px dashed var(--line)' }}>
-        <div style={{ fontSize: '12.5px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-          <span>💡</span>
-          <strong>手动指定模型接入</strong>
-          <span className="hint">（若网关未开放公开模型列表，可直接填入模型 ID）</span>
-        </div>
-        <div style={{ display: 'flex', gap: '8px' }}>
-          <input
-            style={{ flex: 1 }}
-            placeholder="输入模型 ID，如 deepseek-v3 / glm-5.2 / kimi-k2.5 / gpt-4o"
-            value={customModelId}
-            onChange={(e) => setCustomModelId(e.target.value)}
-            spellCheck={false}
-          />
-          <button
-            className="btn primary"
-            disabled={busy || !baseUrl.trim() || !customModelId.trim()}
-            onClick={() => onConnect({ presetId, name, baseUrl, apiKey, protocol }, customModelId.trim())}
-          >
-            直接接入 {targetName}
-          </button>
-        </div>
-      </div>
     </section>
   );
 }

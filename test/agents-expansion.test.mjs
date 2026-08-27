@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import YAML from 'yaml';
-import { applyConfig, targets } from '../server/configWriter.js';
+import { applyConfig, dshProviderKey, targets } from '../server/configWriter.js';
 import * as storage from '../server/storage.js';
 import { getRelayAutostart, setRelayAutostart } from '../server/autostart.js';
 
@@ -41,14 +41,14 @@ test('新 Agent 写入：Cursor / Grok / DeepSeek Harness / Tare / QCoder / ZCod
   const settingsYaml = fs.readFileSync(resHarness.file, 'utf8');
   assert.ok(settingsYaml.includes('test-provider-id-999'));
   const settingsDoc = YAML.parse(settingsYaml);
-  assert.equal(settingsDoc['agent-default-model'].model, 'deepseek-v3');
-  assert.equal(settingsDoc.llm.model, 'deepseek-v3');
-  assert.ok(settingsDoc['llm-deepseek'].models.some((m) => m.id === 'deepseek-v3'), 'llm-deepseek.models 应包含当前模型 ID');
+  const providerKey = dshProviderKey(provider);
+  assert.equal(settingsDoc['agent-default-model'].provider, providerKey);
+  assert.ok(settingsDoc['llm-pi-ai'].providers[providerKey].models.some((m) => m.id === 'deepseek-v3'), 'llm-pi-ai models 应包含当前模型 ID');
 
   const credsFile = path.join(tmp, '.dsh', '.credentials.yaml');
   assert.ok(fs.existsSync(credsFile));
-  const credsYaml = fs.readFileSync(credsFile, 'utf8');
-  assert.ok(credsYaml.includes('DEEPSEEK_API_KEY: "sk-test-key-12345"'));
+  const credsDoc = YAML.parse(fs.readFileSync(credsFile, 'utf8'));
+  assert.equal(credsDoc.refs.DEEPSEEK_API_KEY, 'sk-test-key-12345');
 
   const legacyFile = path.join(tmp, '.deepseek', 'harness.json');
   assert.ok(fs.existsSync(legacyFile));
