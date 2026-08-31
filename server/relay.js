@@ -17,6 +17,11 @@ import {
   openAIToAnthropicResponse,
   createOpenAIToAnthropicStreamTransformer,
 } from './anthropicAdapter.js';
+import {
+  responsesToOpenAIChat,
+  openAIToResponsesResponse,
+  createOpenAIToResponsesStreamTransformer,
+} from './responsesAdapter.js';
 
 export const RELAY_PORT = Number(process.env.CCS_RELAY_PORT || 4180);
 export const RELAY_ORIGIN = `http://127.0.0.1:${RELAY_PORT}`;
@@ -64,6 +69,18 @@ function readRelayConf() {
 
 export function isStrictHost(upstream) {
   return STRICT_HOSTS.some((h) => String(upstream || '').includes(h));
+}
+
+// 识别原生支持 OpenAI Responses API 协议的网关
+export function isNativeResponsesHost(upstream) {
+  const s = String(upstream || '').toLowerCase();
+  return (
+    s.includes('qianfan.baidubce.com') ||
+    s.includes('dashscope.aliyuncs.com') ||
+    s.includes('volces.com') ||
+    s.includes('volcengine.com') ||
+    s.includes('api.openai.com')
+  );
 }
 
 // 严格网关 + Responses API 才需要剥离工具；新路由的 pathOnly 不带前导斜杠（"responses"），旧路由带（"/v2/responses"）
@@ -337,7 +354,7 @@ const HOP_BY_HOP_HEADERS = [
  * - {committed:false, status, respText}：错误响应已缓冲，未发给客户端，可换备用重试
  * - {committed:false, networkError}：网络层失败，可换备用重试
  */
-function tryForward(req, res, { upstream, headers, body, adaptAnthropicToOpenAI, reqModel }) {
+function tryForward(req, res, { upstream, headers, body, adaptAnthropicToOpenAI, adaptResponsesToOpenAI, reqModel }) {
   return new Promise((resolve) => {
     const u = new URL(upstream);
     const transport = u.protocol === 'https:' ? https : http;
@@ -435,6 +452,52 @@ function tryForward(req, res, { upstream, headers, body, adaptAnthropicToOpenAI,
           return;
         }
 
+        // Responses ↔ OpenAI Chat Completions 协议转译 (Codex 访问标准 OpenAI / 智谱 / DeepSeek 等兼容服务)
+        if (adaptResponsesToOpenAI && status >= 200 && status < 300) {
+          const contentType = res2.headers['content-type'] || '';
+          const isStream = contentType.includes('text/event-stream');
+
+          if (isStream) {
+            res.writeHead(200, {
+              'content-type': 'text/event-stream',
+              'cache-control': 'no-cache',
+              connection: 'keep-alive',
+            });
+            const transformer = createOpenAIToResponsesStreamTransformer(res, reqModel);
+            let captured = '';
+            res2.on('data', (c) => {
+              if (captured.length < 2 * 1024 * 1024) captured += c.toString('utf8');
+              transformer.write(c);
+            });
+            res2.on('end', () => {
+              transformer.end();
+              resolve({ committed: true, status, respText: captured });
+            });
+            res2.on('error', () => {
+              transformer.end();
+              resolve({ committed: true, status, respText: captured });
+            });
+            return;
+          }
+
+          // 非流式 JSON
+          let captured = '';
+          res2.on('data', (c) => {
+            if (captured.length < 2 * 1024 * 1024) captured += c.toString('utf8');
+          });
+          res2.on('end', () => {
+            const converted = openAIToResponsesResponse(captured, reqModel);
+            res.writeHead(status, { 'content-type': 'application/json' });
+            res.end(converted);
+            resolve({ committed: true, status, respText: captured });
+          });
+          res2.on('error', () => {
+            res.end();
+            resolve({ committed: true, status, respText: captured });
+          });
+          return;
+        }
+
         // 普通直通透传 + 计量 tap
         res.writeHead(status, res2.headers);
         res2.pipe(res);
@@ -511,6 +574,7 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
 
   readBody(req, async (body) => {
     const isAnthropicReq = /(^|\/)messages$/.test(pathOnly);
+    const isResponsesReq = /(^|\/)responses$/.test(pathOnly);
     const protocol = provider.protocol || 'openai';
     const reqModel = modelFromRequest(isAnthropicReq ? 'anthropic' : protocol, pathOnly, body);
 
@@ -607,7 +671,9 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
       const proto = p.protocol || 'openai';
       let upstream = proto === 'anthropic' && p.anthropicUrl ? p.anthropicUrl : p.baseUrl;
       const isNativeAnthropic = proto === 'anthropic' && (p.presetId === 'anthropic' || String(upstream).includes('anthropic.com') || Boolean(p.anthropicUrl) || /api\.kimi\.com\/coding\/v1/i.test(String(upstream)));
-      const shouldAdapt = isAnthropicReq && !isNativeAnthropic;
+      const isNativeResponses = proto === 'openai' && (p.wireApi === 'responses' || isNativeResponsesHost(upstream));
+      const shouldAdaptAnthropic = isAnthropicReq && !isNativeAnthropic;
+      const shouldAdaptResponses = isResponsesReq && !isNativeResponses;
 
       upstream = String(upstream).replace(/\/+$/, '');
       // Gemini SDK 会自带 /v1beta 版本路径，上游 base 里若已包含则去掉避免重复
@@ -620,8 +686,11 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
       let outBody = body;
       let targetPath = restWithQuery;
 
-      if (shouldAdapt) {
+      if (shouldAdaptAnthropic) {
         outBody = anthropicToOpenAI(body, p.selectedModel || reqModel);
+        targetPath = 'chat/completions';
+      } else if (shouldAdaptResponses) {
+        outBody = responsesToOpenAIChat(body, p.selectedModel || reqModel);
         targetPath = 'chat/completions';
       } else if (needsToolStrip(upstream, req.method, pathOnly)) {
         outBody = stripUnsupportedTools(body);
@@ -653,7 +722,7 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
       // (Claude Code auto mode classifier sends max_tokens<=2048; K3 thinking eats that budget,
       //  so content comes back empty/slow -> relay reports classifier error).
       // Needs "thinking":{"type":"disabled"} as native Anthropic body; OpenAI path already handles via reasoning_effort.
-      if (!shouldAdapt && isAnthropicReq && proto === 'anthropic' && isNativeAnthropic && !String(upstream).includes('anthropic.com')) {
+      if (!shouldAdaptAnthropic && isAnthropicReq && proto === 'anthropic' && isNativeAnthropic && !String(upstream).includes('anthropic.com')) {
         try {
           const obj = JSON.parse(outBody);
           if (obj && typeof obj.max_tokens === 'number' && obj.max_tokens > 0 && obj.max_tokens <= 2048) {
@@ -672,19 +741,19 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
       delete headers['x-api-key'];
       delete headers['x-goog-api-key'];
       for (const h of HOP_BY_HOP_HEADERS) delete headers[h];
-      if (shouldAdapt) {
+      if (shouldAdaptAnthropic) {
         delete headers['anthropic-version'];
         delete headers['anthropic-beta'];
       }
       if (p.apiKey) {
-        if (proto === 'anthropic' && !shouldAdapt) headers['x-api-key'] = p.apiKey;
+        if (proto === 'anthropic' && !shouldAdaptAnthropic) headers['x-api-key'] = p.apiKey;
         else if (proto === 'gemini') headers['x-goog-api-key'] = p.apiKey;
         else headers.authorization = `Bearer ${p.apiKey}`;
       }
       // Kimi coding base ?? https://api.kimi.com/coding/v1?Claude Code ?????? /v1/messages?
       // ??????? /coding/v1/v1/messages -> 404??? Anthropic ?????? v1 ???
       let buildPath = targetPath;
-      if (!shouldAdapt && proto === 'anthropic' && /\/v1\/?$/i.test(upstream)) {
+      if (!shouldAdaptAnthropic && proto === 'anthropic' && /\/v1\/?$/i.test(upstream)) {
         buildPath = String(targetPath).replace(/^\/?v1\//i, '');
       }
       const target = `${upstream}/${buildPath}`;
@@ -696,7 +765,8 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
         upstream: target,
         headers,
         body: outBody,
-        adaptAnthropicToOpenAI: shouldAdapt,
+        adaptAnthropicToOpenAI: shouldAdaptAnthropic,
+        adaptResponsesToOpenAI: shouldAdaptResponses,
         reqModel,
       });
       const status = result.networkError ? 502 : result.status;
@@ -708,7 +778,9 @@ function handleProviderRoute(req, res, providerId, restWithQuery) {
 
       // 计量：每次尝试都是真实调用，各记一条
       try {
-        const usage = extractUsage(shouldAdapt ? 'openai' : proto, shouldAdapt ? 'chat/completions' : pathOnly, outBody, result.respText || '');
+        const usageProto = shouldAdaptAnthropic || shouldAdaptResponses ? 'openai' : proto;
+        const usagePath = shouldAdaptAnthropic || shouldAdaptResponses ? 'chat/completions' : pathOnly;
+        const usage = extractUsage(usageProto, usagePath, outBody, result.respText || '');
         appendUsage({
           providerId: p.id,
           providerName: p.name,

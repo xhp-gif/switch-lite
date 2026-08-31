@@ -52,6 +52,7 @@ test('中继全链路：/p/<id> 转发 -> 鉴权注入 -> SSE 计量落盘', asy
     baseUrl: `http://127.0.0.1:${upstreamPort}/v1`,
     apiKey: 'sk-relay-test',
     protocol: 'openai',
+    wireApi: 'responses',
   });
 
   // 模拟 Codex：POST <relay>/p/<id>/responses（应被转发到 <upstream>/v1/responses）
@@ -230,6 +231,78 @@ test('分类器请求本地秒回：<block>no</block>，不触上游；主对话
     assert.ok(!text2.includes('<block>no</block>'), '主对话不能被本地假应答劫持');
     assert.equal(upstreamCalls, 1, '主对话应恰好转发上游一次');
   }
+  relayServer.close();
+  upstream.close();
+});
+
+test('Codex Responses 访问标准 Chat Completions 上游（智谱/DeepSeek官方）：自动转译为 chat/completions 并流式转回 Responses SSE', async () => {
+  let upstreamCalledPath = null;
+  let upstreamReceivedBody = null;
+  const upstream = http.createServer((req, res) => {
+    upstreamCalledPath = req.url;
+    let b = '';
+    req.on('data', (c) => {
+      b += c;
+    });
+    req.on('end', () => {
+      upstreamReceivedBody = JSON.parse(b);
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end(
+        [
+          `data: ${JSON.stringify({ choices: [{ delta: { content: '你好，我是智谱 GLM！' } }] })}`,
+          '',
+          `data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 12 } })}`,
+          '',
+          'data: [DONE]',
+          '',
+        ].join('\n'),
+      );
+    });
+  });
+  await new Promise((r) => upstream.listen(0, '127.0.0.1', r));
+  const upstreamPort = upstream.address().port;
+
+  const relayServer = startRelay();
+  await new Promise((r) => relayServer.on('listening', r));
+  const relayPort = relayServer.address().port;
+
+  const provider = storage.createProvider({
+    name: '智谱 GLM 官方',
+    target: 'codex',
+    baseUrl: `http://127.0.0.1:${upstreamPort}/api/paas/v4`,
+    apiKey: 'glm-test-key',
+    protocol: 'openai',
+  });
+
+  // Codex 发出 POST /p/<id>/responses 请求
+  const res = await fetch(`http://127.0.0.1:${relayPort}/p/${provider.id}/responses`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'glm-5.3',
+      instructions: 'You are Codex.',
+      input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: '你好' }] }],
+      stream: true,
+    }),
+  });
+
+  assert.equal(res.status, 200);
+  assert.ok(res.headers.get('content-type').includes('text/event-stream'));
+  const text = await res.text();
+
+  // 验证上游收到的请求：路径被重写为 /api/paas/v4/chat/completions，格式为 messages
+  assert.equal(upstreamCalledPath, '/api/paas/v4/chat/completions');
+  assert.ok(Array.isArray(upstreamReceivedBody.messages));
+  assert.equal(upstreamReceivedBody.messages[0].role, 'system');
+  assert.equal(upstreamReceivedBody.messages[1].role, 'user');
+  assert.equal(upstreamReceivedBody.messages[1].content, '你好');
+
+  // 验证 Codex 收到的流式响应：被转译为 Responses API SSE 格式
+  assert.ok(text.includes('event: response.created'), '应有 response.created');
+  assert.ok(text.includes('event: response.output_text.delta'), '应有 response.output_text.delta');
+  assert.ok(text.includes('你好，我是智谱 GLM！'), '应包含模型输出内容');
+  assert.ok(text.includes('event: response.completed'), '应有 response.completed');
+
   relayServer.close();
   upstream.close();
 });
