@@ -15,6 +15,7 @@ export const VENDOR_PRESETS = [
       { series: 'GLM', note: '通用 / 编程', models: ['glm-5.2', 'glm-4.7', 'glm-4.6'] },
       { series: 'Kimi', note: '长上下文 / 文档', models: ['kimi/kimi-k3', 'kimi-k2.5', 'moonshot-v1-128k'] },
       { series: '通义千问', note: '官方全系列', models: ['qwen3.8-max', 'qwen3.7-plus', 'qwen3.7-flash'] },
+      { series: '千问视觉 (支持看图)', note: '多模态 / 图像理解', models: ['qwen-vl-max', 'qwen-vl-plus', 'qwen2.5-vl-72b-instruct'] },
       { series: 'MiniMax', note: '三方直供', models: ['MiniMax/MiniMax-M3'] },
       { series: '小米', note: '三方直供', models: ['xiaomi/mimo-v2.5-pro'] },
     ],
@@ -37,7 +38,10 @@ export const VENDOR_PRESETS = [
     wireApi: 'chat',
     auth: 'bearer',
     description: '智谱开放平台',
-    recommended: [{ series: 'GLM', note: '官方全系列', models: ['glm-5.2', 'glm-4.7', 'glm-4.6', 'glm-4.5-air'] }],
+    recommended: [
+      { series: 'GLM 视觉 (支持看图)', note: '多模态 / 图像理解', models: ['glm-4v-plus', 'glm-4v', 'glm-4v-flash'] },
+      { series: 'GLM 通用 / 编程', note: '官方全系列', models: ['glm-5.2', 'glm-4.7', 'glm-4.6', 'glm-4.5-air', 'glm-4-flash'] },
+    ],
   },
   {
     id: 'moonshot',

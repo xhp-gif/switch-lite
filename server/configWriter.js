@@ -372,10 +372,10 @@ function buildCatalogEntry(modelId, providerDisplayName) {
     supports_search_tool: false,
     // 注意：不声明 apply_patch_tool_type（freeform 会发布 type=custom 工具，
     // 而当前 Codex 构建也不接受 function 变体，多数第三方网关拒绝 custom）
-    supports_image_detail_original: false,
+    supports_image_detail_original: true,
     supports_parallel_tool_calls: true,
     experimental_supported_tools: [],
-    input_modalities: ['text'],
+    input_modalities: ['text', 'image'],
     truncation_policy: { mode: 'tokens', limit: 10000 },
   };
 }
@@ -417,6 +417,11 @@ function writeCodexCatalog(provider, modelId) {
   for (const m of models) {
     if (m.slug === modelId) m.priority = 1;
     else if (typeof m.priority !== 'number' || m.priority < 2) m.priority = 2;
+    // 启用多模态图片输入支持
+    if (!Array.isArray(m.input_modalities) || !m.input_modalities.includes('image')) {
+      m.input_modalities = ['text', 'image'];
+    }
+    m.supports_image_detail_original = true;
   }
   models.sort((a, b) => (a.slug === modelId ? -1 : b.slug === modelId ? 1 : 0));
 
