@@ -3,6 +3,7 @@ import type { Preset, Protocol } from './types';
 export interface InferResult {
   protocol?: Protocol;
   presetId?: string;
+  variantId?: string;
   baseUrl?: string;
   name?: string;
   anthropicUrl?: string;
@@ -40,10 +41,19 @@ export function inferFromInput(url: string, apiKey: string, presets: Preset[] = 
     };
   }
   if (cleanUrl.includes('open.bigmodel.cn')) {
-    return { protocol: 'openai', presetId: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', name: '智谱 GLM' };
+    if (cleanUrl.includes('/api/coding')) {
+      return { protocol: 'openai', presetId: 'zhipu', variantId: 'coding', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', name: '智谱 GLM 编程订阅' };
+    }
+    if (cleanUrl.includes('/api/anthropic')) {
+      return { protocol: 'anthropic', presetId: 'zhipu', variantId: 'coding-anthropic', baseUrl: 'https://open.bigmodel.cn/api/anthropic', name: '智谱 GLM 编程订阅' };
+    }
+    return { protocol: 'openai', presetId: 'zhipu', variantId: 'api', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', name: '智谱 GLM' };
+  }
+  if (cleanUrl.includes('api.kimi.com')) {
+    return { protocol: 'anthropic', presetId: 'moonshot', variantId: 'coding', baseUrl: 'https://api.kimi.com/coding/v1', name: 'Kimi For Coding' };
   }
   if (cleanUrl.includes('api.moonshot.cn')) {
-    return { protocol: 'openai', presetId: 'moonshot', baseUrl: 'https://api.moonshot.cn/v1', name: 'Moonshot Kimi' };
+    return { protocol: 'openai', presetId: 'moonshot', variantId: 'api', baseUrl: 'https://api.moonshot.cn/v1', name: 'Moonshot Kimi' };
   }
   if (cleanUrl.includes('api.deepseek.com')) {
     return { protocol: 'openai', presetId: 'deepseek', baseUrl: 'https://api.deepseek.com', name: 'DeepSeek 官方' };
@@ -55,7 +65,10 @@ export function inferFromInput(url: string, apiKey: string, presets: Preset[] = 
     return { protocol: 'openai', presetId: 'volcengine', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', name: '火山方舟 Ark' };
   }
   if (cleanUrl.includes('api.minimaxi.com')) {
-    return { protocol: 'openai', presetId: 'minimax', baseUrl: 'https://api.minimaxi.com/v1', name: 'MiniMax' };
+    if (cleanUrl.includes('/anthropic')) {
+      return { protocol: 'anthropic', presetId: 'minimax', variantId: 'anthropic', baseUrl: 'https://api.minimaxi.com/anthropic', name: 'MiniMax（Anthropic 兼容）' };
+    }
+    return { protocol: 'openai', presetId: 'minimax', variantId: 'api', baseUrl: 'https://api.minimaxi.com/v1', name: 'MiniMax' };
   }
   if (cleanUrl.includes('api.x.ai')) {
     return { protocol: 'openai', presetId: 'xai', baseUrl: 'https://api.x.ai/v1', name: 'xAI Grok' };

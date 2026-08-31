@@ -38,6 +38,12 @@ export const VENDOR_PRESETS = [
     wireApi: 'chat',
     auth: 'bearer',
     description: '智谱开放平台',
+    // 同厂商多端点：按量 API 与编程订阅的 URL 不同，key 不能混用，探测时自动切换
+    variants: [
+      { id: 'api', label: '按量 API', desc: '开放平台按量计费', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+      { id: 'coding', label: 'GLM 编程订阅', desc: 'Coding Plan 专用入口', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4' },
+      { id: 'coding-anthropic', label: '编程订阅（Claude Code）', desc: '编程订阅的 Anthropic 兼容入口', baseUrl: 'https://open.bigmodel.cn/api/anthropic', protocol: 'anthropic' },
+    ],
     recommended: [
       { series: 'GLM 视觉 (支持看图)', note: '多模态 / 图像理解', models: ['glm-4v-plus', 'glm-4v', 'glm-4v-flash'] },
       { series: 'GLM 通用 / 编程', note: '官方全系列', models: ['glm-5.2', 'glm-4.7', 'glm-4.6', 'glm-4.5-air', 'glm-4-flash'] },
@@ -51,6 +57,10 @@ export const VENDOR_PRESETS = [
     wireApi: 'chat',
     auth: 'bearer',
     description: '月之暗面 Kimi',
+    variants: [
+      { id: 'api', label: '按量 API', desc: '开放平台按量计费', baseUrl: 'https://api.moonshot.cn/v1' },
+      { id: 'coding', label: 'Kimi For Coding', desc: 'Kimi 会员/Coding 套餐专用（Anthropic 协议）', baseUrl: 'https://api.kimi.com/coding/v1', protocol: 'anthropic' },
+    ],
     recommended: [{ series: 'Kimi', note: '官方全系列', models: ['kimi-k2.5', 'kimi-k2-turbo-preview', 'moonshot-v1-128k', 'moonshot-v1-32k', 'moonshot-v1-8k'] }],
   },
   {
@@ -151,6 +161,10 @@ export const VENDOR_PRESETS = [
     wireApi: 'chat',
     auth: 'bearer',
     description: 'MiniMax 官方 API',
+    variants: [
+      { id: 'api', label: '按量 API', desc: '开放平台按量计费', baseUrl: 'https://api.minimaxi.com/v1' },
+      { id: 'anthropic', label: 'Anthropic 兼容（M2）', desc: 'Claude Code 直连 M2 用', baseUrl: 'https://api.minimaxi.com/anthropic', protocol: 'anthropic' },
+    ],
   },
   {
     id: 'baidu',
@@ -183,4 +197,12 @@ export const VENDOR_PRESETS = [
 
 export function getPreset(id) {
   return VENDOR_PRESETS.find((p) => p.id === id) || null;
+}
+
+// 预设的端点变体列表；未登记 variants 的厂商视为单端点
+export function presetVariants(preset) {
+  if (!preset) return [];
+  return (
+    preset.variants || [{ id: 'default', label: '默认', desc: '', baseUrl: preset.baseUrl }]
+  );
 }

@@ -117,8 +117,13 @@ export function createApp() {
   // 直接按 URL 试抓模型（未保存的供应商也可用）
   app.post('/api/fetch-models', async (req, res) => {
     try {
-      const { baseUrl, apiKey = '', protocol = 'openai' } = req.body || {};
-      const result = await discoverModels({ baseUrl, apiKey, protocol });
+      const { baseUrl, apiKey = '', protocol = 'openai', variants = null } = req.body || {};
+      const result = await discoverModels({
+        baseUrl,
+        apiKey,
+        protocol,
+        variants: Array.isArray(variants) ? variants : null,
+      });
       res.json({ ...result, count: result.models.length });
     } catch (err) {
       res.status(400).json({ error: err.message, attempts: err.attempts || null, manualFallback: err.manualFallback || false });
@@ -134,8 +139,12 @@ export function createApp() {
         apiKey: provider.apiKey || '',
         protocol: provider.protocol,
       });
+      // 若探针自动切换到了该厂商的另一个端点（按量/订阅），同步采纳其协议
+      const variant = result.matchedVariant || null;
       const updated = storage.updateProvider(provider.id, {
         baseUrl: result.resolvedBaseUrl || provider.baseUrl,
+        ...(variant && variant.protocol ? { protocol: variant.protocol } : {}),
+        ...(variant && variant.wireApi ? { wireApi: variant.wireApi } : {}),
         models: result.models,
         fetchedAt: new Date().toISOString(),
         lastFetchError: null,

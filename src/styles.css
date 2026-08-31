@@ -688,6 +688,42 @@ input::placeholder {
   flex-shrink: 0;
 }
 
+/* 按量 / 订阅端点切换 chips */
+.variant-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.variant-chip {
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: 12.5px;
+  line-height: 1.4;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.variant-chip:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+  color: var(--text);
+}
+
+.variant-chip.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.variant-chip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .advanced {
   margin-top: 16px;
   border-top: 1px dashed var(--line);

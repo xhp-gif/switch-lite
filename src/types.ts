@@ -41,6 +41,26 @@ export interface PresetRecommended {
   models: string[];
 }
 
+// 同厂商多端点变体：按量 API 与编程订阅的 URL/协议可能不同
+export interface PresetVariant {
+  id: string;
+  label: string;
+  desc?: string;
+  baseUrl: string;
+  protocol?: Protocol;
+  wireApi?: string;
+}
+
+// 探针自动切换命中的端点变体
+export interface MatchedVariant {
+  presetId?: string | null;
+  variantId?: string | null;
+  label?: string;
+  baseUrl?: string;
+  protocol?: Protocol;
+  wireApi?: string | null;
+}
+
 export interface Preset {
   id: string;
   name: string;
@@ -51,6 +71,7 @@ export interface Preset {
   auth: string;
   hugeCatalog?: boolean;
   description?: string;
+  variants?: PresetVariant[];
   recommended?: PresetRecommended[];
 }
 
@@ -83,6 +104,8 @@ export interface FetchResult {
   endpoint: string;
   count: number;
   attempts: { url: string; status: number; ok: boolean; error?: string | null }[];
+  resolvedBaseUrl?: string;
+  matchedVariant?: MatchedVariant | null;
 }
 
 export interface ConfigStatusEntry {

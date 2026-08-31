@@ -1,9 +1,106 @@
+import { VENDOR_PRESETS } from './presets.js';
+
 // 从探测成功的 endpoint 反推标准化有效的 Base URL
 export function resolveBaseFromEndpoint(endpoint) {
   return String(endpoint || '')
     .replace(/\/models$/i, '')
     .replace(/\/api\/tags$/i, '')
     .replace(/\/+$/, '');
+}
+
+// ---------- 厂商端点登记表（按量 / 订阅多地址支持） ----------
+// 从 VENDOR_PRESETS 的 baseUrl / anthropicUrl / variants 汇总出每个 origin 的
+// 合法路径集合与默认端点：纠偏时只放行登记过的路径（含其版本子路径），
+// 未登记的路径才回退到该厂商的默认端点——避免把用户粘贴的编程订阅地址
+// （如 open.bigmodel.cn/api/coding/paas/v4）改写回按量 API 地址。
+const HOST_RULES = (() => {
+  const map = new Map();
+  const addUrl = (raw) => {
+    if (!raw) return;
+    let u;
+    try {
+      u = new URL(raw);
+    } catch {
+      return;
+    }
+    const origin = u.origin;
+    const pathname = u.pathname.replace(/\/+$/, '') || '/';
+    // 根路径 base（如 api.deepseek.com）没有“必须带某路径”的约束，
+    // 不登记纠偏规则，避免把用户填的 /v1 等版本路径误清掉
+    if (pathname === '/') return;
+    let rule = map.get(origin);
+    if (!rule) {
+      rule = { default: `${origin}${pathname}`, paths: [] };
+      map.set(origin, rule);
+    }
+    if (!rule.paths.includes(pathname)) rule.paths.push(pathname);
+  };
+  // 顺序即优先级：preset.baseUrl 先登记，成为该 origin 的默认端点
+  for (const p of VENDOR_PRESETS) {
+    addUrl(p.baseUrl);
+    addUrl(p.anthropicUrl);
+    for (const v of p.variants || []) addUrl(v.baseUrl);
+  }
+  return map;
+})();
+
+function isLocalHost(hostname) {
+  return ['localhost', '127.0.0.1', '[::1]', '::1'].includes(String(hostname || '').toLowerCase());
+}
+
+function hostHealTarget(url) {
+  // 本地服务是用户自己管的，不做厂商纠偏
+  if (isLocalHost(url.hostname)) return null;
+  const pathname = url.pathname.replace(/\/+$/, '') || '/';
+  const rule = HOST_RULES.get(url.origin);
+  if (!rule) return null;
+  // 路径与登记过的端点一致，或是其版本子路径（如 /api/anthropic/v1）→ 放行
+  const known = rule.paths.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  return known ? null : rule.default;
+}
+
+// 列出与 baseUrl 同 origin 的其它已登记端点（同厂商的按量/订阅地址），
+// 供 discoverModels 在 key 被拒时自动重试
+export function variantEndpointsFor(baseUrl) {
+  let origin;
+  try {
+    origin = new URL(normalizeBaseUrl(baseUrl)).origin;
+  } catch {
+    return [];
+  }
+  const seen = new Set([stripTrailingSlash(String(baseUrl || '')).toLowerCase()]);
+  const out = [];
+  for (const p of VENDOR_PRESETS) {
+    const entries = [
+      ...(p.variants || []).map((v) => ({ ...v, protocol: v.protocol || p.protocol, wireApi: v.wireApi || p.wireApi })),
+      p.anthropicUrl
+        ? { id: 'anthropic', label: 'Anthropic 兼容', desc: '', baseUrl: p.anthropicUrl, protocol: 'anthropic', wireApi: p.wireApi }
+        : null,
+      { id: 'default', label: p.name, desc: '', baseUrl: p.baseUrl, protocol: p.protocol, wireApi: p.wireApi },
+    ].filter(Boolean);
+    for (const e of entries) {
+      let u;
+      try {
+        u = new URL(e.baseUrl);
+      } catch {
+        continue;
+      }
+      if (u.origin !== origin) continue;
+      const key = stripTrailingSlash(e.baseUrl).toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({
+        presetId: p.id,
+        variantId: e.id,
+        label: e.label,
+        desc: e.desc || '',
+        baseUrl: stripTrailingSlash(e.baseUrl),
+        protocol: e.protocol,
+        wireApi: e.wireApi,
+      });
+    }
+  }
+  return out;
 }
 
 // 智能输入推导：根据用户输入的 URL 或 API Key 指纹，自动推测协议、供应商预设与标准 Base URL
@@ -39,10 +136,19 @@ export function inferProviderHint({ url = '', apiKey = '' }) {
     };
   }
   if (cleanUrl.includes('open.bigmodel.cn')) {
-    return { protocol: 'openai', presetId: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', name: '智谱 GLM' };
+    if (cleanUrl.includes('/api/coding')) {
+      return { protocol: 'openai', presetId: 'zhipu', variantId: 'coding', baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4', name: '智谱 GLM 编程订阅' };
+    }
+    if (cleanUrl.includes('/api/anthropic')) {
+      return { protocol: 'anthropic', presetId: 'zhipu', variantId: 'coding-anthropic', baseUrl: 'https://open.bigmodel.cn/api/anthropic', name: '智谱 GLM 编程订阅' };
+    }
+    return { protocol: 'openai', presetId: 'zhipu', variantId: 'api', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', name: '智谱 GLM' };
+  }
+  if (cleanUrl.includes('api.kimi.com')) {
+    return { protocol: 'anthropic', presetId: 'moonshot', variantId: 'coding', baseUrl: 'https://api.kimi.com/coding/v1', name: 'Kimi For Coding' };
   }
   if (cleanUrl.includes('api.moonshot.cn')) {
-    return { protocol: 'openai', presetId: 'moonshot', baseUrl: 'https://api.moonshot.cn/v1', name: 'Moonshot Kimi' };
+    return { protocol: 'openai', presetId: 'moonshot', variantId: 'api', baseUrl: 'https://api.moonshot.cn/v1', name: 'Moonshot Kimi' };
   }
   if (cleanUrl.includes('api.deepseek.com')) {
     return { protocol: 'openai', presetId: 'deepseek', baseUrl: 'https://api.deepseek.com', name: 'DeepSeek 官方' };
@@ -54,7 +160,10 @@ export function inferProviderHint({ url = '', apiKey = '' }) {
     return { protocol: 'openai', presetId: 'volcengine', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', name: '火山方舟 Ark' };
   }
   if (cleanUrl.includes('api.minimaxi.com')) {
-    return { protocol: 'openai', presetId: 'minimax', baseUrl: 'https://api.minimaxi.com/v1', name: 'MiniMax' };
+    if (cleanUrl.includes('/anthropic')) {
+      return { protocol: 'anthropic', presetId: 'minimax', variantId: 'anthropic', baseUrl: 'https://api.minimaxi.com/anthropic', name: 'MiniMax（Anthropic 兼容）' };
+    }
+    return { protocol: 'openai', presetId: 'minimax', variantId: 'api', baseUrl: 'https://api.minimaxi.com/v1', name: 'MiniMax' };
   }
   if (cleanUrl.includes('api.x.ai')) {
     return { protocol: 'openai', presetId: 'xai', baseUrl: 'https://api.x.ai/v1', name: 'xAI Grok' };
@@ -90,26 +199,12 @@ export function normalizeBaseUrl(input) {
   url = url.replace(/\/models$/i, '');
   url = stripTrailingSlash(url);
 
-  // 厂商特定版本路径智能纠偏（例如千帆必须走 /v2，不能带 /v1）
+  // 厂商端点智能纠偏：路径不是该厂商登记过的任何端点（含按量/订阅变体及其
+  // 版本子路径）时，才回退到默认端点；登记过的路径原样放行
   try {
     const u = new URL(url);
-    if (u.hostname.includes('qianfan.baidubce.com')) {
-      if (!/\/v2$/i.test(u.pathname)) {
-        url = `${u.origin}/v2`;
-      }
-    } else if (u.hostname.includes('dashscope.aliyuncs.com')) {
-      if (!/\/compatible-mode\/v1$/i.test(u.pathname) && !/\/apps\/anthropic$/i.test(u.pathname)) {
-        url = `${u.origin}/compatible-mode/v1`;
-      }
-    } else if (u.hostname.includes('open.bigmodel.cn')) {
-      if (!/\/api\/paas\/v4$/i.test(u.pathname)) {
-        url = `${u.origin}/api/paas/v4`;
-      }
-    } else if (u.hostname.includes('volces.com')) {
-      if (!/\/api\/v3$/i.test(u.pathname)) {
-        url = `${u.origin}/api/v3`;
-      }
-    }
+    const healed = hostHealTarget(u);
+    if (healed) url = healed;
   } catch {
     /* ignore */
   }
@@ -265,7 +360,7 @@ async function tryFetch(url, headers, timeoutMs) {
  * 根据 Base URL 直接获取供应商模型列表。
  * 会依次尝试多个候选端点，直到拿到非空模型列表。
  */
-export async function discoverModels({ baseUrl, apiKey = '', protocol = 'openai', timeoutMs = 12000 }) {
+export async function discoverModels({ baseUrl, apiKey = '', protocol = 'openai', timeoutMs = 12000, variants = null }) {
   const base = normalizeBaseUrl(baseUrl);
   if (!base) throw new Error('请先填写 Base URL');
   const candidates = buildModelCandidates(base, protocol);
@@ -286,6 +381,43 @@ export async function discoverModels({ baseUrl, apiKey = '', protocol = 'openai'
   }
 
   const authFailed = attempts.some((a) => a.status === 401 || a.status === 403);
+
+  // key 被拒（401/403）但该厂商登记了多个端点（按量 API / 编程订阅等）：
+  // 用同一把 key 逐个变体端点重试，哪个通就用哪个——订阅 key 打按量地址
+  // 必然 401，反之亦然，这是区分“key 错”和“地址错”的关键信号。
+  let variantsTried = 0;
+  if (authFailed) {
+    for (const alt of variants ?? variantEndpointsFor(base)) {
+      const altProtocol = alt.protocol || protocol;
+      const altCandidates = buildModelCandidates(alt.baseUrl, altProtocol);
+      if (altCandidates.length) variantsTried++;
+      const altHeaders = headersFor(altProtocol, apiKey, alt.baseUrl);
+      for (const url of altCandidates) {
+        const r = await tryFetch(url, altHeaders, timeoutMs);
+        attempts.push({ url, status: r.status, ok: r.ok, error: r.error || null, variant: alt.label });
+        if (r.ok) {
+          const models = parseModels(r.json, altProtocol);
+          if (models.length) {
+            return {
+              models,
+              endpoint: url,
+              resolvedBaseUrl: resolveBaseFromEndpoint(url),
+              attempts,
+              matchedVariant: {
+                presetId: alt.presetId || null,
+                variantId: alt.variantId || null,
+                label: alt.label || '',
+                baseUrl: alt.baseUrl,
+                protocol: altProtocol,
+                wireApi: alt.wireApi || null,
+              },
+            };
+          }
+        }
+      }
+    }
+  }
+
   const rateLimited = attempts.some((a) => a.status === 429);
   const notFound = attempts.length > 0 && attempts.every((a) => a.status === 404 || a.status === 405);
   let msg = `无法从该 URL 获取模型列表（已尝试 ${attempts.length} 个端点）`;
@@ -293,6 +425,7 @@ export async function discoverModels({ baseUrl, apiKey = '', protocol = 'openai'
     msg += '：上游供应商接口触发了频率限制 (429 Too Many Requests)，请稍等 5 秒后再试，或在下方直接手动输入模型 ID。';
   } else if (authFailed) {
     msg += '：API Key 无效或未授权，请检查 API Key 是否正确、是否有模型权限。';
+    if (variantsTried) msg += `（已自动尝试该厂商的另外 ${variantsTried} 个端点，key 均被拒绝）`;
   } else if (notFound) {
     msg += '：这些地址都没有可用的 /models 接口，该服务可能未开放公开模型列表。您可在下方直接手动输入模型 ID 接入。';
   } else {

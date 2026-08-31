@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api';
-import type { ModelInfo, Preset, Protocol } from '../types';
+import type { MatchedVariant, ModelInfo, Preset, PresetVariant, Protocol } from '../types';
 import { ModelPicker } from './ModelPicker';
 import { inferFromInput } from '../infer';
 
@@ -19,8 +19,11 @@ interface Props {
   onConnect: (form: ConnectForm, modelId: string) => void;
 }
 
+const normUrl = (u: string) => String(u || '').trim().replace(/\/+$/, '').toLowerCase();
+
 export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
   const [presetId, setPresetId] = useState('');
+  const [variantId, setVariantId] = useState('');
   const [name, setName] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -31,16 +34,44 @@ export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
   const [endpoint, setEndpoint] = useState('');
   const [error, setError] = useState('');
   const [autoHealedUrl, setAutoHealedUrl] = useState('');
+  const [matchedVariant, setMatchedVariant] = useState<MatchedVariant | null>(null);
 
   const preset = presets.find((p) => p.id === presetId) || null;
+  const variants: PresetVariant[] = preset?.variants || [];
 
+  // 选择厂商预设时填入默认端点；但若当前 URL 已经是该预设登记过的某个
+  // 端点（如粘贴的编程订阅地址、探针自动切换的地址），保留不动
   useEffect(() => {
-    if (preset) {
-      setBaseUrl(preset.baseUrl || '');
-      setProtocol(preset.protocol);
-      setName(preset.name);
+    if (!preset) {
+      setVariantId('');
+      return;
     }
+    const cur = normUrl(baseUrl);
+    const hit = variants.find((v) => normUrl(v.baseUrl) === cur);
+    if (hit) {
+      setVariantId(hit.id);
+    } else {
+      setBaseUrl(preset.baseUrl || '');
+      setVariantId(variants[0]?.id || '');
+      setProtocol(preset.protocol);
+    }
+    setName(preset.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [preset]);
+
+  // 切换按量/订阅端点
+  const handleVariantChange = (v: PresetVariant) => {
+    if (!preset) return;
+    setVariantId(v.id);
+    setBaseUrl(v.baseUrl);
+    setProtocol(v.protocol || preset.protocol);
+    setName((prev) => {
+      const isDefaultVariant = variants[0]?.id === v.id;
+      const suggested = isDefaultVariant ? preset.name : `${preset.name}（${v.label}）`;
+      // 用户没起过自定义名字（还是预设名或带自动后缀）才跟随变体重命名
+      return !prev || prev === preset.name || /^.+（.+）$/.test(prev) ? suggested : prev;
+    });
+  };
 
   // 当用户输入/粘贴 API Key 或 Base URL 时，进行智能感知推导
   const handleKeyChange = (newKey: string) => {
@@ -49,6 +80,7 @@ export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
     if (hint) {
       if (hint.protocol) setProtocol(hint.protocol);
       if (hint.presetId && !presetId) setPresetId(hint.presetId);
+      if (hint.variantId) setVariantId(hint.variantId);
       if (hint.baseUrl && (!baseUrl || baseUrl.trim() === '')) setBaseUrl(hint.baseUrl);
       if (hint.name && (!name || name.trim() === '')) setName(hint.name);
     }
@@ -57,10 +89,12 @@ export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
   const handleUrlChange = (newUrl: string) => {
     setBaseUrl(newUrl);
     setAutoHealedUrl('');
+    setMatchedVariant(null);
     const hint = inferFromInput(newUrl, apiKey, presets);
     if (hint) {
       if (hint.protocol) setProtocol(hint.protocol);
       if (hint.presetId && !presetId) setPresetId(hint.presetId);
+      if (hint.variantId) setVariantId(hint.variantId);
       if (hint.name && (!name || name.trim() === '')) setName(hint.name);
     }
   };
@@ -72,11 +106,19 @@ export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
     setModels([]);
     setEndpoint('');
     setAutoHealedUrl('');
+    setMatchedVariant(null);
     try {
       const r = await api.fetchModelsRaw({ baseUrl, apiKey, protocol });
       setModels(r.models);
       setEndpoint(r.endpoint);
-      if (r.resolvedBaseUrl && r.resolvedBaseUrl !== baseUrl.trim().replace(/\/+$/, '')) {
+      // 探针自动切换到了该厂商的另一个端点（如订阅 key 打按量地址 401 后命中订阅端点）
+      if (r.matchedVariant) {
+        setMatchedVariant(r.matchedVariant);
+        if (r.matchedVariant.presetId) setPresetId(r.matchedVariant.presetId);
+        setVariantId(r.matchedVariant.variantId || '');
+        if (r.matchedVariant.protocol) setProtocol(r.matchedVariant.protocol);
+      }
+      if (r.resolvedBaseUrl && normUrl(r.resolvedBaseUrl) !== normUrl(baseUrl)) {
         setBaseUrl(r.resolvedBaseUrl);
         setAutoHealedUrl(r.resolvedBaseUrl);
       }
@@ -118,6 +160,25 @@ export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
             <option value="gemini">Gemini</option>
           </select>
         </label>
+        {variants.length > 0 && (
+          <div className="field wide">
+            <span>接入方式（按量 / 订阅端点不同，key 不能混用）</span>
+            <div className="variant-row">
+              {variants.map((v) => (
+                <button
+                  key={v.id}
+                  type="button"
+                  className={`variant-chip${variantId === v.id ? ' active' : ''}`}
+                  title={v.desc || v.baseUrl}
+                  disabled={busy || loading}
+                  onClick={() => handleVariantChange(v)}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <label className="field wide">
           <span>Base URL（支持纯域名或完整 URL，自动补全及探测）</span>
           <input
@@ -159,7 +220,12 @@ export function QuickConnect({ presets, targetName, busy, onConnect }: Props) {
         {endpoint && (
           <span className="hint ok-text">
             来自 {endpoint} · 共 {models.length} 个可用模型
-            {autoHealedUrl && `（已自动校准 Base URL）`}
+            {matchedVariant && (
+              <>
+                （已自动识别<code style={{ color: 'var(--accent)', fontWeight: 650 }}>{matchedVariant.label}</code>端点并校准 Base URL）
+              </>
+            )}
+            {!matchedVariant && autoHealedUrl && `（已自动校准 Base URL）`}
           </span>
         )}
       </div>

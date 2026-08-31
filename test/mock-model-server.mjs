@@ -27,6 +27,24 @@ export function startMockServer(port = 18999) {
         );
         return;
       }
+      // 模拟“订阅 key 打按量端点”：无论 key 对错都 401（用于变体端点自动探测测试）
+      if (url.pathname === '/locked/v1/models') {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: 'invalid api key' } }));
+        return;
+      }
+      // 模拟“订阅专用端点”：合法 key 才放行
+      if (url.pathname === '/coding/v1/models') {
+        const auth = req.headers.authorization || '';
+        if (!auth.startsWith('Bearer sk-test-')) {
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: { message: 'invalid api key' } }));
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ object: 'list', data: [{ id: 'glm-4.7' }, { id: 'glm-4.6' }] }));
+        return;
+      }
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'not found' }));
     });
