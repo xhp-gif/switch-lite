@@ -207,6 +207,78 @@ describe('Responses ↔ OpenAI Chat Completions 协议适配器', () => {
     assert.equal(openaiReq.messages[2].tool_call_id, 'tool_ok');
   });
 
+  it('缺省预算：Codex 未传 max_output_tokens 时注入默认 max_tokens 并携带 stream_options', () => {
+    const openaiReq = JSON.parse(
+      responsesToOpenAIChat({ model: 'k3-256k', input: 'hi', stream: true }),
+    );
+    assert.equal(openaiReq.max_tokens, 32768, '应注入默认 max_tokens（思考模型会消耗输出预算）');
+    assert.deepEqual(openaiReq.stream_options, { include_usage: true });
+
+    // 显式预算原样透传，不加 stream_options（非流式）
+    const explicit = JSON.parse(
+      responsesToOpenAIChat({ model: 'k3-256k', input: 'hi', stream: false, max_output_tokens: 4096 }),
+    );
+    assert.equal(explicit.max_tokens, 4096);
+    assert.equal(explicit.stream_options, undefined);
+  });
+
+  it('思考内容：reasoning_content 转为 Responses reasoning 条目，不混入 assistant 正文', async () => {
+    const chunks = [];
+    const mockRes = {
+      write(data) {
+        chunks.push(data);
+      },
+      end() {
+        chunks.push('[END]');
+      },
+    };
+    const transformer = createOpenAIToResponsesStreamTransformer(mockRes, 'k3-256k');
+    transformer.write(
+      `data: ${JSON.stringify({ choices: [{ delta: { reasoning_content: '先看目录结构' } }] })}\n\n`,
+    );
+    transformer.write(
+      `data: ${JSON.stringify({ choices: [{ delta: { content: '好的' } }] })}\n\n`,
+    );
+    transformer.write('data: [DONE]\n\n');
+    transformer.end();
+
+    const fullOutput = chunks.join('');
+    assert.ok(fullOutput.includes('event: response.output_item.added'), '应有 output_item.added');
+    assert.ok(fullOutput.includes('"type":"reasoning"'), '应产生 reasoning 条目');
+    assert.ok(fullOutput.includes('event: response.reasoning_summary_text.delta'), '应有 reasoning delta');
+    assert.ok(fullOutput.includes('"delta":"先看目录结构"'), '思考内容应在 reasoning delta 里');
+    assert.ok(fullOutput.includes('event: response.output_text.delta'), '正文仍走 output_text.delta');
+    assert.ok(!fullOutput.includes('先看目录结构\\n好的'), '思考内容不能拼进正文');
+
+    // 正文消息内容只包含 content 部分
+    const doneMatch = fullOutput.match(/event: response\.output_item\.done\ndata: (.*)\n/g) || [];
+    const msgDone = doneMatch.find((s) => s.includes('"type":"message"'));
+    assert.ok(msgDone && msgDone.includes('"text":"好的"'), 'message 条目只含正文');
+  });
+
+  it('截断响应：finish_reason=length 标记 incomplete，不再伪装正常完成', async () => {
+    const chunks = [];
+    const mockRes = {
+      write(data) {
+        chunks.push(data);
+      },
+      end() {
+        chunks.push('[END]');
+      },
+    };
+    const transformer = createOpenAIToResponsesStreamTransformer(mockRes, 'k3-256k');
+    transformer.write(
+      `data: ${JSON.stringify({ choices: [{ delta: { content: '想了一半' }, finish_reason: 'length' }], usage: { prompt_tokens: 5, completion_tokens: 32768 } })}\n\n`,
+    );
+    transformer.write('data: [DONE]\n\n');
+    transformer.end();
+
+    const fullOutput = chunks.join('');
+    assert.ok(fullOutput.includes('event: response.incomplete'), '应发 response.incomplete 事件');
+    assert.ok(fullOutput.includes('"status":"incomplete"'), '状态应为 incomplete');
+    assert.ok(fullOutput.includes('"max_output_tokens"'), '应带 incomplete_details 原因');
+  });
+
   it('非流式响应转换：将 OpenAI 响应转为 Responses API 格式', () => {
     const openaiResp = {
       id: 'chatcmpl-abc123',

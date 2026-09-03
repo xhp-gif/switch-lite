@@ -24,6 +24,16 @@ export function responsesToOpenAIChat(body, targetModel = '') {
     out.max_tokens = body.max_output_tokens;
   } else if (typeof body.max_tokens === 'number') {
     out.max_tokens = body.max_tokens;
+  } else {
+    // Codex 未配置 model_max_output_tokens 时不带 max_tokens，上游会用很小的默认值；
+    // Kimi K3 等思考模型的推理 token 也会消耗该预算，思考中途被截断就返回空内容，
+    // 表现为任务干到一半静默停止。给一个宽松的缺省预算。
+    out.max_tokens = 32768;
+  }
+
+  if (out.stream) {
+    // 让上游在流末尾回传 usage：Codex 靠它做上下文预算，relay 靠它计量
+    out.stream_options = { include_usage: true };
   }
 
   if (typeof body.temperature === 'number') {
@@ -253,6 +263,16 @@ export function openAIToResponsesResponse(openAIBody, reqModel = '') {
   const respId = data.id ? `resp_${data.id.replace(/^chatcmpl-/, '')}` : `resp_${crypto.randomBytes(12).toString('hex')}`;
   const now = Math.floor(Date.now() / 1000);
 
+  // 思考模型的推理内容单独成条目，不混入 assistant 正文
+  if (msg.reasoning_content) {
+    output.push({
+      type: 'reasoning',
+      id: `rs_${crypto.randomBytes(8).toString('hex')}`,
+      summary: [{ type: 'summary_text', text: String(msg.reasoning_content) }],
+      content: [],
+    });
+  }
+
   if (msg.content) {
     output.push({
       type: 'message',
@@ -283,12 +303,14 @@ export function openAIToResponsesResponse(openAIBody, reqModel = '') {
 
   const promptTokens = Number(data.usage?.prompt_tokens) || 0;
   const completionTokens = Number(data.usage?.completion_tokens) || 0;
+  const truncated = choice.finish_reason === 'length';
 
   return JSON.stringify({
     id: respId,
     object: 'response',
     created_at: now,
-    status: 'completed',
+    status: truncated ? 'incomplete' : 'completed',
+    ...(truncated ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
     model: data.model || reqModel || 'unknown',
     output,
     usage: {
@@ -305,10 +327,14 @@ export function openAIToResponsesResponse(openAIBody, reqModel = '') {
 export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
   const respId = `resp_${crypto.randomBytes(12).toString('hex')}`;
   const msgId = `msg_${crypto.randomBytes(8).toString('hex')}`;
+  const reasoningId = `rs_${crypto.randomBytes(8).toString('hex')}`;
   let sentCreated = false;
   let textOutputStarted = false;
   let textOutputIndex = 0;
   let accumulatedText = '';
+  let reasoningStarted = false;
+  let reasoningOutputIndex = 0;
+  let accumulatedReasoning = '';
   let activeToolMap = new Map(); // tcIdx -> { outputIndex, id, callId, name, arguments }
   let nextOutputIndex = 0;
   let totalInputTokens = 0;
@@ -317,6 +343,7 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
   let buffer = '';
   let modelName = reqModel || 'unknown';
   let streamEnded = false;
+  let finishReason = '';
 
   function sendEvent(eventType, eventData) {
     res.write(`event: ${eventType}\ndata: ${JSON.stringify(eventData)}\n\n`);
@@ -368,6 +395,29 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
     }
   }
 
+  function ensureReasoningStarted() {
+    if (!reasoningStarted) {
+      reasoningStarted = true;
+      reasoningOutputIndex = nextOutputIndex++;
+      sendEvent('response.output_item.added', {
+        type: 'response.output_item.added',
+        output_index: reasoningOutputIndex,
+        item: {
+          type: 'reasoning',
+          id: reasoningId,
+          summary: [],
+          content: [],
+        },
+      });
+      sendEvent('response.reasoning_summary_part.added', {
+        type: 'response.reasoning_summary_part.added',
+        output_index: reasoningOutputIndex,
+        summary_index: 0,
+        part: { type: 'summary_text', text: '' },
+      });
+    }
+  }
+
   function handleOpenAIChunk(chunkStr) {
     const lines = chunkStr.split('\n');
     for (const rawLine of lines) {
@@ -400,10 +450,12 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
       const choice = parsed.choices?.[0];
       if (!choice) continue;
 
+      if (choice.finish_reason) finishReason = choice.finish_reason;
+
       const delta = choice.delta || {};
 
-      // 1. 处理思考/推理内容或普通文本内容
-      const textChunk = delta.content || delta.reasoning_content || delta.reasoning || '';
+      // 1. 普通文本内容（注意：reasoning_content 不在这里，见下）
+      const textChunk = delta.content || '';
       if (textChunk) {
         ensureTextOutputStarted();
         accumulatedText += textChunk;
@@ -412,6 +464,21 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
           output_index: textOutputIndex,
           content_index: 0,
           delta: textChunk,
+        });
+      }
+
+      // 1.5 思考模型的推理内容（Kimi K3 reasoning_content 等）转成 Responses reasoning 条目。
+      // 不能并入正文：会被 Codex 当成 assistant 发言存进历史，模型看到自己的思考记录后
+      // 常常把"思考结论"直接当回答输出、不再调用工具，表现为任务干一半就停。
+      const reasoningChunk = delta.reasoning_content || delta.reasoning || '';
+      if (reasoningChunk) {
+        ensureReasoningStarted();
+        accumulatedReasoning += reasoningChunk;
+        sendEvent('response.reasoning_summary_text.delta', {
+          type: 'response.reasoning_summary_text.delta',
+          output_index: reasoningOutputIndex,
+          summary_index: 0,
+          delta: reasoningChunk,
         });
       }
 
@@ -464,6 +531,26 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
   function finishStream() {
     if (streamEnded) return;
     streamEnded = true;
+
+    // 0. 关闭思考输出块
+    if (reasoningStarted) {
+      sendEvent('response.reasoning_summary_text.done', {
+        type: 'response.reasoning_summary_text.done',
+        output_index: reasoningOutputIndex,
+        summary_index: 0,
+        text: accumulatedReasoning,
+      });
+      sendEvent('response.output_item.done', {
+        type: 'response.output_item.done',
+        output_index: reasoningOutputIndex,
+        item: {
+          type: 'reasoning',
+          id: reasoningId,
+          summary: accumulatedReasoning ? [{ type: 'summary_text', text: accumulatedReasoning }] : [],
+          content: [],
+        },
+      });
+    }
 
     // 1. 关闭文本输出块
     if (textOutputStarted) {
@@ -522,8 +609,19 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
       });
     }
 
-    // 3. 发送 response.completed
+    // 3. 发送 response.completed / response.incomplete
+    // 上游 length 截断（思考 token 烧完预算导致空响应是典型场景）必须如实标记，
+    // 否则 Codex 把半截响应当正常完成，任务静默中断。
+    const truncated = finishReason === 'length';
     const finalOutput = [];
+    if (reasoningStarted) {
+      finalOutput.push({
+        type: 'reasoning',
+        id: reasoningId,
+        summary: accumulatedReasoning ? [{ type: 'summary_text', text: accumulatedReasoning }] : [],
+        content: [],
+      });
+    }
     if (textOutputStarted) {
       finalOutput.push({
         type: 'message',
@@ -544,13 +642,14 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
       });
     }
 
-    sendEvent('response.completed', {
-      type: 'response.completed',
+    sendEvent(truncated ? 'response.incomplete' : 'response.completed', {
+      type: truncated ? 'response.incomplete' : 'response.completed',
       response: {
         id: respId,
         object: 'response',
         created_at: Math.floor(Date.now() / 1000),
-        status: 'completed',
+        status: truncated ? 'incomplete' : 'completed',
+        ...(truncated ? { incomplete_details: { reason: 'max_output_tokens' } } : {}),
         model: modelName,
         output: finalOutput,
         usage: {
