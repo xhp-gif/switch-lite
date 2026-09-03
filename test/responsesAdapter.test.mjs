@@ -91,6 +91,122 @@ describe('Responses ↔ OpenAI Chat Completions 协议适配器', () => {
     assert.deepEqual(openaiReq.tools[0].function.parameters.required, ['path']);
   });
 
+  it('并行工具调用：连续 function_call 合并为单条 assistant 消息，tool 消息紧跟其后', () => {
+    // 复现 v0.6.0 Codex 接 Kimi 报错：一轮两个并行 exec_command 调用，
+    // 旧实现拆成两条 assistant 消息，触发严格网关
+    // "an assistant message with 'tool_calls' must be followed by tool messages" 400
+    const codexReq = {
+      model: 'k3-256k',
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: '读取一下项目代码' }],
+        },
+        {
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'output_text', text: '我来看下项目结构。' }],
+        },
+        {
+          type: 'function_call',
+          id: 'tool_aaa',
+          call_id: 'tool_aaa',
+          name: 'exec_command',
+          arguments: '{"cmd":"Get-Content README.md"}',
+        },
+        {
+          type: 'function_call',
+          id: 'tool_bbb',
+          call_id: 'tool_bbb',
+          name: 'exec_command',
+          arguments: '{"cmd":"Get-ChildItem"}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'tool_aaa',
+          output: 'README 内容',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'tool_bbb',
+          output: '目录列表',
+        },
+      ],
+    };
+
+    const openaiReq = JSON.parse(responsesToOpenAIChat(codexReq));
+
+    // [user, assistant文本, assistant(tool_calls x2), tool, tool]
+    assert.equal(openaiReq.messages.length, 5);
+    assert.equal(openaiReq.messages[2].role, 'assistant');
+    assert.equal(openaiReq.messages[2].tool_calls.length, 2);
+    assert.deepEqual(
+      openaiReq.messages[2].tool_calls.map((t) => t.id),
+      ['tool_aaa', 'tool_bbb'],
+    );
+    assert.equal(openaiReq.messages[3].role, 'tool');
+    assert.equal(openaiReq.messages[3].tool_call_id, 'tool_aaa');
+    assert.equal(openaiReq.messages[4].role, 'tool');
+    assert.equal(openaiReq.messages[4].tool_call_id, 'tool_bbb');
+
+    // 严格网关不变量：每条 assistant 的 tool_calls 后必须紧跟响应全部 id 的 tool 消息
+    for (let i = 0; i < openaiReq.messages.length; i++) {
+      const m = openaiReq.messages[i];
+      if (m.role === 'assistant' && Array.isArray(m.tool_calls)) {
+        const followed = openaiReq.messages.slice(i + 1, i + 1 + m.tool_calls.length);
+        assert.ok(
+          followed.every((x) => x.role === 'tool'),
+          `消息 ${i} 的 tool_calls 后必须是 tool 消息`,
+        );
+        const answered = new Set(followed.map((x) => x.tool_call_id));
+        for (const tc of m.tool_calls) {
+          assert.ok(answered.has(tc.id), `tool_call ${tc.id} 缺少响应消息`);
+        }
+      }
+    }
+  });
+
+  it('孤儿 function_call_output：找不到对应调用时丢弃，避免严格网关 400', () => {
+    const codexReq = {
+      model: 'k3-256k',
+      input: [
+        {
+          type: 'message',
+          role: 'user',
+          content: [{ type: 'input_text', text: 'hi' }],
+        },
+        // local_shell_call 被剥离后残留的 output：没有对应 function_call
+        {
+          type: 'function_call_output',
+          call_id: 'shell_orphan',
+          output: '残留输出',
+        },
+        {
+          type: 'function_call',
+          id: 'tool_ok',
+          call_id: 'tool_ok',
+          name: 'exec_command',
+          arguments: '{}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'tool_ok',
+          output: 'ok',
+        },
+      ],
+    };
+
+    const openaiReq = JSON.parse(responsesToOpenAIChat(codexReq));
+
+    // 孤儿 tool 消息被丢弃：[user, assistant(tool_calls), tool]
+    assert.equal(openaiReq.messages.length, 3);
+    assert.equal(openaiReq.messages[1].role, 'assistant');
+    assert.equal(openaiReq.messages[1].tool_calls[0].id, 'tool_ok');
+    assert.equal(openaiReq.messages[2].role, 'tool');
+    assert.equal(openaiReq.messages[2].tool_call_id, 'tool_ok');
+  });
+
   it('非流式响应转换：将 OpenAI 响应转为 Responses API 格式', () => {
     const openaiResp = {
       id: 'chatcmpl-abc123',

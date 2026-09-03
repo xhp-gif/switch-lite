@@ -53,11 +53,25 @@ export function responsesToOpenAIChat(body, targetModel = '') {
   if (typeof body.input === 'string') {
     out.messages.push({ role: 'user', content: body.input });
   } else if (Array.isArray(body.input)) {
+    // 严格网关（Moonshot/智谱等）要求 assistant 的 tool_calls 后必须紧跟对应的 tool 消息。
+    // Codex 并行工具调用会把多条 function_call 连续放进 input：必须合并为同一条 assistant
+    // 消息的 tool_calls 数组，拆成多条 assistant 消息会被判 "tool_call_ids did not have
+    // response messages"（v0.6.0 接 Kimi 报错的根因）。
+    let pendingToolCalls = null;
+    const knownCallIds = new Set();
+    const flushPendingToolCalls = () => {
+      if (pendingToolCalls) {
+        out.messages.push({ role: 'assistant', content: null, tool_calls: pendingToolCalls });
+        pendingToolCalls = null;
+      }
+    };
+
     for (const item of body.input) {
       if (!item || typeof item !== 'object') continue;
 
       // 如果已经是传统消息格式 {role, content}
       if (!item.type && item.role) {
+        flushPendingToolCalls();
         out.messages.push({
           role: item.role,
           content: typeof item.content === 'string' ? item.content : JSON.stringify(item.content ?? ''),
@@ -67,6 +81,7 @@ export function responsesToOpenAIChat(body, targetModel = '') {
 
       // message 类型
       if (item.type === 'message') {
+        flushPendingToolCalls();
         const role = item.role === 'assistant' ? 'assistant' : 'user';
         let textParts = [];
         let imageParts = [];
@@ -115,6 +130,7 @@ export function responsesToOpenAIChat(body, targetModel = '') {
 
       // 顶级 input_image / image_url 项
       if (item.type === 'input_image' || item.type === 'image_url') {
+        flushPendingToolCalls();
         let url = '';
         if (typeof item.image_url === 'string') {
           url = item.image_url;
@@ -136,6 +152,8 @@ export function responsesToOpenAIChat(body, targetModel = '') {
       }
 
       // function_call / custom_tool_call 类型 (assistant 发起的工具调用历史)
+      // 连续出现的调用先攒进 pendingToolCalls，遇到其他类型条目或 input 结束时统一落盘，
+      // 保证一轮多个并行调用只产生一条 assistant 消息。
       if (item.type === 'function_call' || item.type === 'custom_tool_call') {
         const callId = item.call_id || item.id || `call_${crypto.randomBytes(6).toString('hex')}`;
         const name = item.name || 'custom_tool';
@@ -144,26 +162,26 @@ export function responsesToOpenAIChat(body, targetModel = '') {
         else if (typeof item.input === 'string') args = item.input;
         else args = JSON.stringify(item.arguments ?? item.input ?? {});
 
-        out.messages.push({
-          role: 'assistant',
-          content: null,
-          tool_calls: [
-            {
-              id: callId,
-              type: 'function',
-              function: {
-                name,
-                arguments: args,
-              },
-            },
-          ],
+        if (!pendingToolCalls) pendingToolCalls = [];
+        pendingToolCalls.push({
+          id: callId,
+          type: 'function',
+          function: {
+            name,
+            arguments: args,
+          },
         });
+        knownCallIds.add(callId);
         continue;
       }
 
       // function_call_output / custom_tool_call_output 类型 (工具执行结果)
       if (item.type === 'function_call_output' || item.type === 'custom_tool_call_output') {
         const callId = item.call_id || item.id || '';
+        // 孤儿 tool 消息（找不到对应调用，如 local_shell_call 被剥离后的残留）同样会被
+        // 严格网关 400，直接丢弃
+        if (!callId || !knownCallIds.has(callId)) continue;
+        flushPendingToolCalls();
         let contentStr = '';
         if (typeof item.output === 'string') {
           contentStr = item.output;
@@ -179,6 +197,7 @@ export function responsesToOpenAIChat(body, targetModel = '') {
         continue;
       }
     }
+    flushPendingToolCalls();
   }
 
   // 3. 工具声明转换 (tools)
