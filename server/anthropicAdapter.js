@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 
 export function anthropicToOpenAI(body, targetModel = '') {
   if (typeof body === 'string') {
@@ -231,6 +232,8 @@ export function createOpenAIToAnthropicStreamTransformer(res, reqModel = '') {
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
   let buffer = '';
+  // SSE 分片可能把多字节 UTF-8 字符从中间切开，按分片直接 toString 会产生 U+FFFD 乱码
+  const byteDecoder = new StringDecoder('utf8');
   let pendingStopReason = null; // finish_reason 只记录，流真正结束时才发 message_delta：
   // 部分供应商（DeepSeek/千帆等）把 usage 放在 finish_reason 之后的独立 chunk 里，
   // 提前收流会把这些计量吞掉，看板 input 全变 0。
@@ -421,7 +424,7 @@ export function createOpenAIToAnthropicStreamTransformer(res, reqModel = '') {
 
   return {
     write(chunk) {
-      buffer += chunk.toString('utf8');
+      buffer += byteDecoder.write(chunk);
       const parts = buffer.split('\n\n');
       buffer = parts.pop() || '';
       for (const part of parts) {
@@ -429,6 +432,7 @@ export function createOpenAIToAnthropicStreamTransformer(res, reqModel = '') {
       }
     },
     end() {
+      buffer += byteDecoder.end();
       if (buffer.trim()) handleOpenAIChunk(buffer);
       if (!sentStart) ensureMessageStart(reqModel);
       finishStream(pendingStopReason || 'end_turn');

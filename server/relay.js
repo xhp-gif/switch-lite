@@ -10,6 +10,7 @@ import https from 'node:https';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { getProvider, listProviders, getSettings } from './storage.js';
 import { appendUsage } from './usage.js';
 import {
@@ -436,10 +437,12 @@ function tryForward(req, res, { upstream, headers, body, adaptAnthropicToOpenAI,
 
           // 非流式 JSON
           let captured = '';
+          const capDecoder = new StringDecoder('utf8');
           res2.on('data', (c) => {
-            if (captured.length < 2 * 1024 * 1024) captured += c.toString('utf8');
+            if (captured.length < 2 * 1024 * 1024) captured += capDecoder.write(c);
           });
           res2.on('end', () => {
+            captured += capDecoder.end();
             const converted = openAIToAnthropicResponse(captured, reqModel);
             res.writeHead(status, { 'content-type': 'application/json' });
             res.end(converted);
@@ -482,10 +485,12 @@ function tryForward(req, res, { upstream, headers, body, adaptAnthropicToOpenAI,
 
           // 非流式 JSON
           let captured = '';
+          const capDecoder = new StringDecoder('utf8');
           res2.on('data', (c) => {
-            if (captured.length < 2 * 1024 * 1024) captured += c.toString('utf8');
+            if (captured.length < 2 * 1024 * 1024) captured += capDecoder.write(c);
           });
           res2.on('end', () => {
+            captured += capDecoder.end();
             const converted = openAIToResponsesResponse(captured, reqModel);
             res.writeHead(status, { 'content-type': 'application/json' });
             res.end(converted);
@@ -522,12 +527,18 @@ function tryForward(req, res, { upstream, headers, body, adaptAnthropicToOpenAI,
 }
 
 function readBody(req, cb) {
+  // 请求体含大量中文（Codex 回放的会话历史），分片边界可能切开多字节字符，
+  // 按分片 toString 会产生 U+FFFD 乱码甚至破坏 JSON；StringDecoder 缓存残缺字节
+  const decoder = new StringDecoder('utf8');
   let body = '';
   req.on('data', (c) => {
-    body += c;
+    body += decoder.write(c);
     if (body.length > 16 * 1024 * 1024) req.destroy();
   });
-  req.on('end', () => cb(body));
+  req.on('end', () => {
+    body += decoder.end();
+    cb(body);
+  });
 }
 
 // 备选链：同 Agent 下「模型列表包含本次请求模型」的其他供应商，跳过熔断中的

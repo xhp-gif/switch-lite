@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 
 /**
  * 将 Codex 发送的 Responses API 请求体转换为标准 OpenAI Chat Completions 格式
@@ -341,6 +342,9 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
   let totalOutputTokens = 0;
   let cachedTokens = 0;
   let buffer = '';
+  // SSE 分片可能把多字节 UTF-8 字符（中文 3 字节/emoji 4 字节）从中间切开，
+  // 按分片直接 toString 会产生 U+FFFD 乱码；StringDecoder 会缓存残缺字节等下一个分片
+  const byteDecoder = new StringDecoder('utf8');
   let modelName = reqModel || 'unknown';
   let streamEnded = false;
   let finishReason = '';
@@ -664,7 +668,7 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
 
   return {
     write(chunk) {
-      buffer += chunk.toString('utf8');
+      buffer += byteDecoder.write(chunk);
       const parts = buffer.split('\n\n');
       buffer = parts.pop() || '';
       for (const part of parts) {
@@ -672,6 +676,7 @@ export function createOpenAIToResponsesStreamTransformer(res, reqModel = '') {
       }
     },
     end() {
+      buffer += byteDecoder.end();
       if (buffer.trim()) handleOpenAIChunk(buffer);
       if (!sentCreated) ensureResponseCreated(reqModel);
       finishStream();

@@ -168,6 +168,34 @@ describe('Anthropic ↔ OpenAI 协议适配器', () => {
     assert.ok(fullOutput.includes('event: message_stop'), '应产生 message_stop 事件');
   });
 
+  it('UTF-8 边界：多字节字符跨 SSE 分片不产生乱码', async () => {
+    const chunks = [];
+    const mockRes = {
+      write(data) {
+        chunks.push(data);
+      },
+      end() {
+        chunks.push('[END]');
+      },
+    };
+    const transformer = createOpenAIToAnthropicStreamTransformer(mockRes, 'glm-5.2');
+
+    const line = Buffer.from(
+      `data: {"choices":[{"delta":{"content":"英文术语解释"}}]}\n\n`,
+      'utf8',
+    );
+    // 在"术"字 3 字节的中间切开，模拟 TCP 分片边界
+    const cut = line.indexOf(Buffer.from('术语解释', 'utf8')) + 1;
+    transformer.write(line.slice(0, cut));
+    transformer.write(line.slice(cut));
+    transformer.write('data: [DONE]\n\n');
+    transformer.end();
+
+    const fullOutput = chunks.join('');
+    assert.ok(fullOutput.includes('术语解释'), '多字节字符应完整还原');
+    assert.ok(!fullOutput.includes('\uFFFD'), '不应出现 U+FFFD 替换符');
+  });
+
   it('流式响应转换：finish_reason 之后迟到的 usage chunk 不丢失（message_delta 带最终 input_tokens）', async () => {
     const chunks = [];
     const mockRes = {
